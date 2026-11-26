@@ -119,11 +119,15 @@ jobs:
               try{
                 const exe=fs.readlinkSync('/proc/'+pid+'/exe');
                 if(!exe.startsWith(prefix))continue;
+                const status=fs.readFileSync('/proc/'+pid+'/status','utf8');
+                const parent=status.match(/^PPid:\s+(\d+)$/m);
+                if(!parent||Number(parent[1])!==process.pid)continue;
                 const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\0').filter(Boolean);
                 if(!args.length||args.some(a=>a.startsWith('--type=')))continue;
                 candidates.push({exe,args});
               }catch{}
             }
+            console.log('BROWSER_DIRECT_CHILD_COUNT '+candidates.length);
             assert.equal(candidates.length,1,'UNIQUE_BROWSER_PROCESS');
             const {exe,args}=candidates[0];
             assert(!args.some(a=>a.startsWith('--ignore-certificate-errors')||a==='--disable-web-security'||a==='--allow-insecure-localhost'));
