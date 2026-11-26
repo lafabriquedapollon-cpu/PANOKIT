@@ -1,0 +1,103 @@
+// PANOKIT disposable SEC01 real loopback HTTP qualification. No TLS/browser or production integration.
+import assert from 'node:assert/strict';
+import {randomBytes,randomUUID,createHash} from 'node:crypto';
+import {readFileSync,mkdtempSync} from 'node:fs';
+import path from 'node:path';
+import {setTimeout as sleep} from 'node:timers/promises';
+import {createServer} from 'node:net';
+import {Jar,parseUri,totp} from './mfa-helpers.mjs';
+import {createBroker,sessionCookie} from './guarded-broker.mjs';
+import {startGate,runHttpCases} from './https-cases.mjs';
+import {createLabCertificate,runTransportCases} from './tls-transport.mjs';
+const TOTAL=12, PORT=55444, BASE='http://127.0.0.1:55445', TLS_ORIGIN='https://127.0.0.1:55445', DB='panokit_sec01_sovereign_lab';
+const roles=['mfa_verifier','issuer','writer','revoker','logout','sweeper'],clients=[];
+let admin,v,i,w,r,l,sw,actor,broker;
+const scalar=async(c,q,args=[])=>Object.values((await c.query(q,args)).rows[0])[0];
+const sqlDenied=async fn=>assert.rejects(fn,e=>e?.code==='42501');
+const brokerDenied=async fn=>assert.rejects(fn,e=>e?.message==='SEC01_CEREMONY_DENIED');
+const report=(name,status,extra={})=>console.log(JSON.stringify({name,status,...extra}));
+let pg, pool, bootstrap, started=false, startAttempted=false, passed=0, failed=0, fatal=false, cleanup=true;
+let auth, app, material, current, errorStage='PREFLIGHT';
+const pw=randomBytes(32).toString('hex'), authSecret=randomBytes(48).toString('hex');
+const password=randomBytes(24).toString('hex'), email=`lab-${randomUUID()}@example.invalid`;
+const delay=async()=>{const rem=30000-Date.now()%30000;if(rem<2500)await sleep(rem+300);};
+async function freePort(port){const s=createServer();await new Promise((resolve,reject)=>{s.once('error',reject);s.listen(port,'127.0.0.1',resolve);});await new Promise((resolve,reject)=>s.close(e=>e?reject(e):resolve()));}
+async function call(jar,route,body){
+ assert.match(route,/^\/[a-z0-9/-]+$/);const headers=new Headers({origin:BASE,accept:'application/json'});if(jar.header())headers.set('cookie',jar.header());if(body!==undefined)headers.set('content-type','application/json');
+ const response=await auth.handler(new Request(`${BASE}/api/auth${route}`,{method:body===undefined?'GET':'POST',headers,...(body===undefined?{}:{body:JSON.stringify(body)})}));
+ jar.update(response.headers);let data=null;try{data=await response.json();}catch{}return {status:response.status,data};
+}
+const ok=r=>assert(r.status>=200&&r.status<300,'EXPECTED_SUCCESS');
+const session=async jar=>{const r=await call(jar,'/get-session');ok(r);return r.data;};
+const noSession=async jar=>assert.equal((await session(jar))?.session??null,null,'UNEXPECTED_SESSION');
+const signin=async()=>{const jar=new Jar();const r=await call(jar,'/sign-in/email',{email,password});ok(r);assert.equal(r.data?.twoFactorRedirect,true);assert(r.data?.twoFactorMethods?.includes('totp'));assert(jar.hasSuffix('.two_factor'));await noSession(jar);return jar;};
+let secret, subject, enrolledSession;
+async function test(name,fn){current=name;try{await fn();passed++;report(name,'PASS');}catch(e){failed++;report(name,'FAIL',{kind:e instanceof assert.AssertionError?'ASSERTION':'RUNTIME',code:/^[A-Z0-9_]{1,40}$/.test(e?.code??'')?e.code:undefined});throw e;}}
+try{
+ assert.equal(process.argv[2],'--disposable-lab');assert.equal(process.argv.length,3);
+ const pkg=JSON.parse(readFileSync(new URL('./node_modules/better-auth/package.json',import.meta.url),'utf8'));assert.equal(pkg.version,'1.7.26');
+ const fixture=readFileSync(new URL('./r2-lab.sql',import.meta.url));assert.equal(createHash('sha256').update(fixture).digest('hex'),'bc64c21343f7094abfb313050e2607b28a17b9821cc194ab88be706ae36228c4');
+ await freePort(PORT);await freePort(55445);errorStage='IMPORTS';
+ const {createRequire}=await import('node:module');const req=createRequire(import.meta.url);for(const dep of ['reflect-metadata','@nestjs/common','@nestjs/core','@nestjs/platform-express','./r4-compiled/sec01-sovereign-tls-gate.js','./r4-compiled/sec01-sovereign-sql-adapter.js'])req.resolve(dep);
+ const {default:EmbeddedPostgres}=await import('embedded-postgres');const {Client,Pool}=await import('pg');const {betterAuth}=await import('better-auth');const {twoFactor}=await import('better-auth/plugins');
+ // Explicit public export discovery, no internal mutation or fallback to a mock.
+ let getMigrations;for(const spec of ['better-auth/db/migration','better-auth/db']){try{const m=await import(spec);if(typeof m.getMigrations==='function'){getMigrations=m.getMigrations;break;}}catch(e){if(!['ERR_PACKAGE_PATH_NOT_EXPORTED','ERR_MODULE_NOT_FOUND'].includes(e.code))throw e;}}
+ if(!getMigrations)throw Error('MIGRATION_EXPORT_UNAVAILABLE');
+ errorStage='PG_BOOTSTRAP';const dir=mkdtempSync(path.resolve('r4-tls01-disposable-'));
+ pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port:PORT,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
+ await pg.initialise();startAttempted=true;await pg.start();started=true;
+ bootstrap=new Client({host:'127.0.0.1',port:PORT,database:'postgres',user:'postgres',password:pw,connectionTimeoutMillis:5000});await bootstrap.connect();
+ const info=(await bootstrap.query("select current_setting('server_version_num')::int as version, current_setting('listen_addresses') as bind, inet_server_addr()::text as addr")).rows[0];assert(info.version>=170000&&info.version<180000);assert.equal(info.bind,'127.0.0.1');assert.match(info.addr,/^127\.0\.0\.1(?:\/32)?$/);report('LAB','READY',{...info,betterAuth:pkg.version});
+ const rolePw=randomBytes(32).toString('hex');await bootstrap.query(`create role panokit_mfa_lab login password '${rolePw}' nosuperuser nocreatedb nocreaterole noreplication nobypassrls`);await bootstrap.query(`create database ${DB}`);
+ admin=await connect('postgres',pw);await admin.query('grant usage,create on schema public to panokit_mfa_lab');
+ pool=new Pool({host:'127.0.0.1',port:PORT,database:DB,user:'panokit_mfa_lab',password:rolePw,max:6,connectionTimeoutMillis:5000,statement_timeout:10000});
+ errorStage='MIGRATION';const options={database:pool,baseURL:BASE,secret:authSecret,trustedOrigins:[BASE],emailAndPassword:{enabled:true},session:{cookieCache:{enabled:false}},rateLimit:{enabled:false},logger:{disabled:true},plugins:[twoFactor({issuer:'PANOKIT LAB',skipVerificationOnEnable:false,twoFactorCookieMaxAge:45,totpOptions:{digits:6,period:30},accountLockout:{enabled:true,maxFailedAttempts:10,durationSeconds:900}})]};
+ const migrations=await getMigrations(options);assert.deepEqual(migrations.unsafeChanges??[],[]);assert.deepEqual(migrations.schemaProblems??[],[]);await migrations.runMigrations();auth=betterAuth(options);report('MIGRATION','PASS');
+
+ async function connect(user,pw){const c=new Client({host:'127.0.0.1',port:PORT,database:'panokit_sec01_sovereign_lab',user,password:pw,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});clients.push(c);await c.connect();return c;}
+ await admin.query(fixture.toString('utf8').replace(/^\s*\\set\b.*$/gim,''));
+ await admin.query(readFileSync(new URL('./lifecycle-lab.sql',import.meta.url),'utf8'));report('LIFECYCLE_MIGRATION','PASS');
+ await admin.query(readFileSync(new URL('./totp-guard.sql',import.meta.url),'utf8'));report('TOTP_GUARD_MIGRATION','PASS');
+ let verifierPassword;const roleConnections=[];for(const role of roles){const password=randomBytes(32).toString('hex');if(role==='mfa_verifier')verifierPassword=password;await admin.query(`alter role sec01_admin_${role} password '${password}'`);roleConnections.push(await connect('sec01_admin_'+role,password));}
+ [v,i,w,r,l,sw]=roleConnections;const v2=await connect('sec01_admin_mfa_verifier',verifierPassword);assert.notEqual(await scalar(v,'select pg_backend_pid()'),await scalar(v2,'select pg_backend_pid()'));
+ const ids=await Promise.all(roleConnections.map(c=>c.query('select session_user as su,current_user as cu,pg_backend_pid() as pid')));assert.equal(new Set(ids.map(x=>x.rows[0].pid)).size,6);ids.forEach((x,j)=>{assert.equal(x.rows[0].su,'sec01_admin_'+roles[j]);assert.equal(x.rows[0].cu,x.rows[0].su);});report('SQL_ROLES','PASS',{count:6});
+ const enrollment=new Jar();ok(await call(enrollment,'/sign-up/email',{email,password,name:'PANOKIT LAB'}));const first=await session(enrollment);assert(first?.user?.id);subject=first.user.id;const result=await call(enrollment,'/two-factor/enable',{password,method:'totp'});ok(result);assert.equal(result.data?.method,'totp');secret=parseUri(result.data.totpURI);await delay();ok(await call(enrollment,'/two-factor/verify-totp',{code:totp(secret),trustDevice:false}));const enrolled=await session(enrollment);assert.equal(enrolled?.user?.twoFactorEnabled,true);enrolledSession=enrolled.session.id;const enrollmentCookie=sessionCookie(enrollment.header());
+ // Owner-controlled synthetic mapping. Never accept an actor/subject from client input.
+ actor=randomUUID();await admin.query('insert into sec01_admin.accounts(actor_id,better_auth_subject,active,can_edit) values($1,$2,true,true)',[actor,subject]);
+ const cookieJar=raw=>{const pair=sessionCookie(raw);const n=pair.indexOf('=');return new Jar([[pair.slice(0,n),pair.slice(n+1)]]);};
+ let nativeCalls=0;const provider={begin:async()=>signin(),revokeSession:async raw=>{const jar=cookieJar(raw);ok(await call(jar,'/sign-out',{}));await noSession(cookieJar(raw));},complete:async(jar,code)=>{nativeCalls++;assert(jar.hasSuffix('.two_factor'));await noSession(jar);const res=await call(jar,'/two-factor/verify-totp',{code,trustDevice:false});if(res.status>=400&&res.status<500){await noSession(jar);throw Error('NATIVE_TOTP_REJECTED');}ok(res);const after=await session(jar);assert.equal(after?.user?.id,subject);assert(after?.session?.id);assert.notEqual(after.session.id,enrolledSession);assert(!jar.hasSuffix('.two_factor'));assert(!jar.hasSuffix('.trust_device'));return {subject:after.user.id,sessionId:after.session.id,authCookie:sessionCookie(jar.header())};},readSession:async raw=>{const s=await session(cookieJar(raw));return s?.session?.id?{subject:s.user.id,sessionId:s.session.id}:null;}};
+ const replayKey=randomBytes(32);
+ const ports=client=>({begin:async(sub,digest,expires)=>assert.equal(await scalar(client,'select sec01_admin.begin_mfa_proof($1,$2,$3)',[sub,digest,expires]),true),reserve:async(sub,digest,tag)=>scalar(client,'select sec01_admin.reserve_totp($1,$2,$3)',[sub,digest,tag]),mark:async(sub,digest,providerId)=>assert.equal(await scalar(client,'select sec01_admin.mark_reserved_totp($1,$2,$3)',[sub,digest,providerId]),true)});
+ broker=createBroker({subject,provider,sql:ports(v),key:randomBytes(32),replayKey,ttlMs:60000});
+ const prepare=async()=>{await delay();return broker.begin({});};
+ const complete=async a=>broker.complete({...a,code:totp(secret)});
+ const fresh=async()=>complete(await prepare());
+ const issued=async proof=>{const id=randomUUID(),digest=randomBytes(32);assert.equal(await scalar(i,"select sec01_admin.issue_bound_session($1,$2,$3,$4,clock_timestamp()+interval '240 seconds')",[proof.subject,proof.proofDigest,id,digest]),actor);return {id,digest};};
+ const issue=async input=>issued(await broker.verifyIssue(input));
+ const countSessions=()=>scalar(admin,'select count(*)::int from sec01_admin.sessions');
+ const countProofs=(filter='true')=>scalar(admin,`select count(*)::int from sec01_admin.mfa_proofs where ${filter}`);
+ errorStage='MFA_GUARD_SCENARIOS';
+ const attempts=()=>scalar(admin,'select count(*)::int from sec01_admin.totp_attempts where actor_id=$1 and attempted_at>clock_timestamp()-interval \'120 seconds\'',[actor]);
+ // Synthetic owner-only time fixture, never a public API; no resetting budget in product code.
+ const age=async()=>{await admin.query("update sec01_admin.totp_attempts set attempted_at=clock_timestamp()-interval '121 seconds' where actor_id=$1",[actor]);};
+ const code=()=>totp(secret);
+ const freshBroker=client=>createBroker({subject,provider,sql:ports(client),key:randomBytes(32),replayKey,ttlMs:60000});
+ const denied=async fn=>assert.rejects(fn,e=>e?.message==='SEC01_CEREMONY_DENIED'||e?.code==='42501');
+ const countNative=()=>scalar(admin,'select count(*)::int from public."session" where "userId"=$1',[subject]);
+ const proofOf=async()=>{const p=randomBytes(32);assert.equal(await scalar(v,'select sec01_admin.begin_mfa_proof($1,$2,clock_timestamp()+interval \'50 seconds\')',[subject,p]),true);return p;};
+ const reserve=(client,p,t)=>scalar(client,'select sec01_admin.reserve_totp($1,$2,$3)',[subject,p,t]);
+ const mark=(client,p,id)=>scalar(client,'select sec01_admin.mark_reserved_totp($1,$2,$3)',[subject,p,id]);
+ await test('MFA-01 direct legacy marking and table access denied',async()=>{assert.equal(await scalar(admin,"select has_function_privilege('sec01_admin_mfa_verifier','sec01_admin.mark_bound_mfa(text,bytea,text)','EXECUTE')"),false);await sqlDenied(()=>v.query('select sec01_admin.mark_bound_mfa($1,$2,$3)',[subject,randomBytes(32),enrolledSession]));await sqlDenied(()=>v.query('select * from sec01_admin.totp_attempts'));await sqlDenied(()=>w.query('select sec01_admin.reserve_totp($1,$2,$3)',[subject,randomBytes(32),randomBytes(32)]));});
+ await test('MFA-02 unreserved proof cannot be marked or issue',async()=>{const p=await proofOf();await sqlDenied(()=>mark(v,p,enrolledSession));await sqlDenied(()=>issued({subject,proofDigest:p}));assert.equal(await attempts(),0);});
+ await test('MFA-03 native MFA success reserves and issues exactly one privilege',async()=>{await age();await delay();const a=await prepare(),n=await countSessions();const p=await complete(a);await issue(p);assert.equal(await countSessions(),n+1);assert.equal(await attempts(),1);assert.equal(await scalar(admin,'select count(*)::int from sec01_admin.totp_attempts where actor_id=$1 and verified_at is not null',[actor]),1);});
+ await test('MFA-04 same TOTP different broker and connection rejected before native call',async()=>{await age();await delay();const b=freshBroker(v2),a=await prepare(),z=await b.begin({}),otp=code(),p=await broker.complete({...a,code:otp});const n=await countNative(),invocations=nativeCalls;await denied(()=>b.complete({...z,code:otp}));assert.equal(nativeCalls,invocations);assert.equal(await countNative(),n);await issue(p);assert.equal(await attempts(),2);});
+ await test('MFA-05 concurrent same TOTP across brokers yields exactly one native call',async()=>{await age();await delay();const b=freshBroker(v2),a=await prepare(),z=await b.begin({}),otp=code(),before=nativeCalls,n=await countSessions();const results=await Promise.allSettled([broker.complete({...a,code:otp}),b.complete({...z,code:otp})]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(nativeCalls,before+1);assert.equal(await attempts(),2);const j=results.findIndex(x=>x.status==='fulfilled');await issued(await [broker,b][j].verifyIssue(results[j].value));assert.equal(await countSessions(),n+1);});
+ await test('MFA-06 wrong native TOTP consumes budget and cannot mark proof',async()=>{await age();await delay();const nearby=new Set([-2,-1,0,1,2].map(n=>totp(secret,Date.now()+n*30000)));let c=0;while(nearby.has(String(c).padStart(6,'0')))c++;const before=await countProofs('verified_at is not null'),a=await prepare();await assert.rejects(()=>broker.complete({...a,code:String(c).padStart(6,'0')}),e=>e?.message==='NATIVE_TOTP_REJECTED');assert.equal(await attempts(),1);assert.equal(await countProofs('verified_at is not null'),before);});
+ await test('MFA-07 concurrent distinct tags enforce five-attempt ceiling',async()=>{await age();const ps=await Promise.all(Array.from({length:8},()=>proofOf()));const outcomes=await Promise.all(ps.map((p,j)=>reserve(j%2?v:v2,p,randomBytes(32))));assert.equal(outcomes.filter(Boolean).length,5);assert.equal(await attempts(),5);const a=await prepare(),before=nativeCalls;await denied(()=>complete(a));assert.equal(nativeCalls,before);assert.equal(await attempts(),5);});
+ await test('MFA-08 budget survives reconnect and broker recreation',async()=>{const replacement=await connect('sec01_admin_mfa_verifier',verifierPassword);const b=freshBroker(replacement),a=await b.begin({}),before=nativeCalls;await denied(()=>b.complete({...a,code:code()}));assert.equal(nativeCalls,before);assert.equal(await attempts(),5);});
+ await test('MFA-09 sliding window reopens after synthetic timestamp expiry',async()=>{await age();await delay();const a=await prepare(),p=await complete(a);await issue(p);assert.equal(await attempts(),1);});
+ await test('MFA-10 same proof reservation cannot be repeated or marked twice',async()=>{await age();const p=await proofOf(),tag=randomBytes(32);assert.equal(await reserve(v,p,tag),true);assert.equal(await reserve(v2,p,tag),false);assert.equal(await attempts(),1);await sqlDenied(()=>mark(v,randomBytes(32),enrolledSession));});
+ await test('MFA-11 epoch change after reservation prevents marking and leaves attempt consumed',async()=>{await age();const p=await proofOf(),tag=randomBytes(32);assert.equal(await reserve(v,p,tag),true);assert.equal(await scalar(r,'select sec01_admin.revoke_factor($1)',[actor]),true);await sqlDenied(()=>mark(v,p,enrolledSession));const p2=await proofOf();assert.equal(await reserve(v2,p2,tag),false);assert.equal(await attempts(),2);});
+ await test('MFA-12 failed SQL mark after native success revokes native session',async()=>{await age();await delay();const guard=ports(v2);const b=createBroker({subject,provider,sql:{...guard,mark:async(...args)=>{assert.equal(await scalar(r,'select sec01_admin.revoke_factor($1)',[actor]),true);return guard.mark(...args);}},key:randomBytes(32),replayKey,ttlMs:60000});const a=await b.begin({}),n=await countNative(),before=await countSessions();await denied(()=>b.complete({...a,code:code()}));assert.equal(await countNative(),n);assert.equal(await countSessions(),before);assert.equal(await attempts(),1);});
+} catch(e){fatal=true;report('RUN','STOPPED',{stage:errorStage,scenario:current??null,kind:e instanceof assert.AssertionError?'ASSERTION':'RUNTIME',code:/^[A-Z0-9_]{1,40}$/.test(e?.code??'')?e.code:undefined});}
+finally{if(app)try{await app.close();await freePort(55445);}catch{cleanup=false;}if(material)try{material.dispose();}catch{cleanup=false;}for(const c of clients.reverse())try{await c.end();}catch{cleanup=false;}if(pool)try{await pool.end();}catch{cleanup=false;}if(bootstrap)try{await bootstrap.end();}catch{cleanup=false;}if(startAttempted)try{await pg.stop();}catch{cleanup=false;}if(startAttempted)try{await freePort(PORT);}catch{cleanup=false;}report('CLEANUP',cleanup?(started?'PASS':'NOT_STARTED'):'FAIL');report('SUMMARY',fatal||failed||!cleanup||passed!==TOTAL?'INCOMPLETE':'PASS',{pass:passed,fail:failed,notRun:TOTAL-passed-failed,scope:'real native Better Auth in-process + persistent PostgreSQL guard; independent brokers and DB connections; synthetic clock fixture; no HTTP production integration'});process.exitCode=fatal||failed||!cleanup||passed!==TOTAL?1:0;}
