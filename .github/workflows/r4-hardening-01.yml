@@ -138,7 +138,7 @@ jobs:
             // Only public package metadata from previously verified exact lock bytes.
             const b64=raw.toString('base64');
             for(let i=0;i<b64.length;i+=2048)console.log('PUBLIC_LOCK_'+kind+' '+String(i/2048).padStart(4,'0')+' '+b64.slice(i,i+2048));
-            JS
+          JS
             code=0
             npm audit --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/audit-$kind.json" || code=$?
             node --input-type=module - "$kind" "$code" "$RUNNER_TEMP/audit-$kind.json" <<'JS'
@@ -148,7 +148,7 @@ jobs:
             assert(!a.error,'AUDIT_SERVICE_ERROR');
             assert(a.metadata?.vulnerabilities,'AUDIT_MISSING_METADATA');
             console.log('AUDIT_RESULT '+JSON.stringify({kind,exit:Number(code),counts:a.metadata.vulnerabilities,findings:Object.entries(a.vulnerabilities??{}).map(([name,v])=>({name,severity:v.severity,range:v.range,via:v.via.map(x=>typeof x==='string'?x:{source:x.source,title:x.title,url:x.url,severity:x.severity,range:x.range}),fixAvailable:v.fixAvailable}))}));
-            JS
+          JS
           done
       - name: Semantic TypeScript check of all four original TS sources
         if: always()
