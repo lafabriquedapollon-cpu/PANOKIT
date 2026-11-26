@@ -80,7 +80,7 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/r4-browser-deps"
           cd "$RUNNER_TEMP/r4-browser-deps"
           printf '%s\n' '{"name":"panokit-browser-lab","version":"0.0.0","private":true,"dependencies":{"playwright":"1.65.1"}}' > package.json
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          cp "$GITHUB_WORKSPACE/labs/r4-hardening-02/browser.package-lock.json" package-lock.json
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
@@ -95,19 +95,8 @@ jobs:
           console.log('BROWSER_LOCK_INTEGRITY PASS');
           JS
           sha256sum package-lock.json
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          import assert from 'node:assert/strict';
-          const raw=fs.readFileSync('package-lock.json'),l=JSON.parse(raw);
-          for(const [name,v] of Object.entries(l.packages)){
-            if(!name) continue;
-            const u=new URL(v.resolved);assert.equal(u.origin,'https://registry.npmjs.org');assert(!u.username&&!u.password&&!u.search&&!u.hash);assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
-          }
-          const b=raw.toString('base64');
-          for(let i=0;i<b.length;i+=2048)console.log('PUBLIC_LOCK_BROWSER '+String(i/2048).padStart(4,'0')+' '+b.slice(i,i+2048));
-          JS
-          before="$(sha256sum package-lock.json)"
-          echo "$before" > "$RUNNER_TEMP/r4-browser-lock.sha256"
+          echo '089dd64d2f709c5ac17b105afb5d1ef79c2af98d6a9afe597955b431d9b90c28  package-lock.json' | sha256sum -c -
+          echo '089dd64d2f709c5ac17b105afb5d1ef79c2af98d6a9afe597955b431d9b90c28  package-lock.json' > "$RUNNER_TEMP/r4-browser-lock.sha256"
           npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
           sha256sum package-lock.json
           sha256sum -c "$RUNNER_TEMP/r4-browser-lock.sha256"
@@ -124,14 +113,22 @@ jobs:
           try{
             assert.equal(b.version(),'159.0.8154.6');
             console.log('BROWSER_BINARY_VERSION '+b.version());
-            const session=await b.newBrowserCDPSession();
-            const cmd=await session.send('Browser.getBrowserCommandLine');
-            const executable=cmd.arguments[0];
-            assert(executable.startsWith(process.env.PLAYWRIGHT_BROWSERS_PATH+'/'));
-            assert(!cmd.arguments.some(a=>a.startsWith('--ignore-certificate-errors')||a==='--disable-web-security'));
-            const h=createHash('sha256').update(fs.readFileSync(executable)).digest('hex');
-            console.log('BROWSER_BINARY_SHA256 '+h);
-            console.log('BROWSER_SANDBOX_DISABLED '+cmd.arguments.includes('--no-sandbox'));
+            const prefix=process.env.PLAYWRIGHT_BROWSERS_PATH+'/';
+            const candidates=[];
+            for(const pid of fs.readdirSync('/proc').filter(p=>/^\d+$/.test(p))){
+              try{
+                const exe=fs.readlinkSync('/proc/'+pid+'/exe');
+                if(!exe.startsWith(prefix))continue;
+                const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\0').filter(Boolean);
+                if(!args.length||args.some(a=>a.startsWith('--type=')))continue;
+                candidates.push({exe,args});
+              }catch{}
+            }
+            assert.equal(candidates.length,1,'UNIQUE_BROWSER_PROCESS');
+            const {exe,args}=candidates[0];
+            assert(!args.some(a=>a.startsWith('--ignore-certificate-errors')||a==='--disable-web-security'||a==='--allow-insecure-localhost'));
+            console.log('BROWSER_BINARY_SHA256 '+createHash('sha256').update(fs.readFileSync(exe)).digest('hex'));
+            console.log('BROWSER_SANDBOX_DISABLED '+args.includes('--no-sandbox'));
           }finally{await b.close();}
           JS
       - name: Execute Chromium network ceremony
@@ -142,6 +139,46 @@ jobs:
           cd "$RUNNER_TEMP/r4-tls-01"
           node --check browser-lab.mjs
           BROWSER_DEPS="$RUNNER_TEMP/r4-browser-deps" PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node browser-lab.mjs --disposable-lab
+      - name: Qualify exact current stable Chrome for Testing
+        run: |
+          set -euo pipefail
+          version=158.0.8127.88
+          dest="$RUNNER_TEMP/r4-stable-chrome"
+          mkdir -m 700 "$dest"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 --max-time 60 "https://googlechromelabs.github.io/chrome-for-testing/$version.json" -o "$dest/manifest.json"
+          node --input-type=module - "$dest/manifest.json" <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const m=JSON.parse(fs.readFileSync(process.argv[2]));
+          assert.equal(m.version,'158.0.8127.88');
+          const u=m.downloads.chrome.filter(x=>x.platform==='linux64');
+          assert.equal(u.length,1);
+          assert.equal(u[0].url,'https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux64/chrome-linux64.zip');
+          console.log('STABLE_MANIFEST PASS '+m.version);
+          JS
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 --retry 2 --max-time 180 "https://storage.googleapis.com/chrome-for-testing-public/$version/linux64/chrome-linux64.zip" -o "$dest/chrome.zip"
+          sha256sum "$dest/chrome.zip"
+          unzip -q "$dest/chrome.zip" -d "$dest"
+          export STABLE_CHROME="$dest/chrome-linux64/chrome"
+          test -x "$STABLE_CHROME"
+          sha256sum "$STABLE_CHROME"
+          "$STABLE_CHROME" --version
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const source=fs.readFileSync('browser-lab.mjs','utf8');
+          const from='chromium.launch({headless:true,env:{...process.env,HOME:home},timeout:30000})';
+          const to='chromium.launch({headless:true,executablePath:process.env.STABLE_CHROME,env:{...process.env,HOME:home},timeout:30000})';
+          assert.equal(source.split(from).length,2);
+          const versionFrom="browser=await launch();report('CHROMIUM','READY',{version:browser.version()});";
+          const versionTo="browser=await launch();assert.equal(browser.version(),'158.0.8127.88');report('CHROMIUM','READY',{version:browser.version()});";
+          assert.equal(source.split(versionFrom).length,2);
+          fs.writeFileSync('browser-stable-lab.mjs',source.replace(from,to).replace(versionFrom,versionTo),{flag:'wx'});
+          console.log('STABLE_HARNESS only executable path and exact version assertion changed');
+          JS
+          node --check browser-stable-lab.mjs
+          BROWSER_DEPS="$RUNNER_TEMP/r4-browser-deps" PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node browser-stable-lab.mjs --disposable-lab
       - name: Audit exact locked npm dependencies (fail closed)
         if: always()
         run: |
