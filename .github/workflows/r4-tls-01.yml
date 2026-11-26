@@ -1,0 +1,84 @@
+name: R4-TLS-01
+on:
+  push:
+    branches: ['ci/r4-tls-01']
+    paths:
+      - 'labs/r4-tls-01/**'
+      - '.github/workflows/r4-tls-01.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: r4-tls-01
+  cancel-in-progress: false
+jobs:
+  tls-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22.16.0'
+          package-manager-cache: false
+      - name: Prepare isolated lab and verify sources
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(uname -m)" = x86_64
+          test "$(node --version)" = v22.16.0
+          openssl version
+          mkdir -m 700 "$RUNNER_TEMP/r4-tls-01"
+          cp -a labs/r4-tls-01/. "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          sha256sum -c SHA256SUMS.txt
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('package.json'));
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.lockfileVersion,3);
+          for(const [name,version] of Object.entries(p.dependencies)) assert.equal(l.packages['node_modules/'+name].version,version);
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');
+            assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          console.log('LOCK_INTEGRITY PASS');
+          JS
+          sha256sum package-lock.json
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          sha256sum package-lock.json
+      - name: Compile and execute original TLS tests
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check compile-tls.cjs
+          node --check tls-transport.mjs
+          node --check https-cases.mjs
+          node --check r4-tls-bind.mjs
+          node compile-tls.cjs
+          node --check r4-compiled/sec01-sovereign-tls-gate.js
+          node --check r4-compiled/sec01-sovereign-sql-adapter.js
+          sha256sum r4-compiled/*.js
+          node --test broker.test.mjs adapter.test.cjs tls-transport.test.mjs
+          node r4-tls-bind.mjs --disposable-lab
+      - name: Verify immutable sources and free ports
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          sha256sum -c SHA256SUMS.txt
+          node --input-type=module <<'JS'
+          import {createServer} from 'node:net';
+          for(const port of [55444,55445]){
+            const s=createServer();
+            await new Promise((r,j)=>{s.once('error',j);s.listen(port,'127.0.0.1',r)});
+            await new Promise((r,j)=>s.close(e=>e?j(e):r()));
+            console.log('PORT_FREE',port);
+          }
+          JS
+          echo 'Synthetic lab only. No browser, production TLS, certification or deployment.' >> "$GITHUB_STEP_SUMMARY"
