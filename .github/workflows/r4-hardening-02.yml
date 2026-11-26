@@ -101,6 +101,9 @@ jobs:
           sha256sum package-lock.json
           sha256sum -c "$RUNNER_TEMP/r4-browser-lock.sha256"
           PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" ./node_modules/.bin/playwright install chromium
+          mapfile -t shells < <(find "$RUNNER_TEMP/r4-chromium" -type f -name chrome-headless-shell)
+          test "${#shells[@]}" -eq 1
+          printf '%s  %s\n' '24eb0a14de64ab0c9c2e283a5512ca817db64af8fd853cdb4d818f19a8e23b9b' "${shells[0]}" | sha256sum -c -
           PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node --input-type=module <<'JS'
           import {chromium} from 'playwright';
           import fs from 'node:fs';
@@ -131,7 +134,9 @@ jobs:
             assert.equal(candidates.length,1,'UNIQUE_BROWSER_PROCESS');
             const {exe,args}=candidates[0];
             assert(!args.some(a=>a.startsWith('--ignore-certificate-errors')||a==='--disable-web-security'||a==='--allow-insecure-localhost'));
-            console.log('BROWSER_BINARY_SHA256 '+createHash('sha256').update(fs.readFileSync(exe)).digest('hex'));
+            const digest=createHash('sha256').update(fs.readFileSync(exe)).digest('hex');
+            assert.equal(digest,'24eb0a14de64ab0c9c2e283a5512ca817db64af8fd853cdb4d818f19a8e23b9b');
+            console.log('BROWSER_BINARY_SHA256 '+digest);
             console.log('BROWSER_SANDBOX_DISABLED '+args.includes('--no-sandbox'));
           }finally{await b.close();}
           JS
@@ -161,11 +166,11 @@ jobs:
           console.log('STABLE_MANIFEST PASS '+m.version);
           JS
           curl --fail --silent --show-error --proto '=https' --tlsv1.2 --retry 2 --max-time 180 "https://storage.googleapis.com/chrome-for-testing-public/$version/linux64/chrome-linux64.zip" -o "$dest/chrome.zip"
-          sha256sum "$dest/chrome.zip"
+          printf '%s  %s\n' '59e3b43f8b3aaa292238fbdcfb36a93127debd53e212510dcdc2cc8812b4b57e' "$dest/chrome.zip" | sha256sum -c -
           unzip -q "$dest/chrome.zip" -d "$dest"
           export STABLE_CHROME="$dest/chrome-linux64/chrome"
           test -x "$STABLE_CHROME"
-          sha256sum "$STABLE_CHROME"
+          printf '%s  %s\n' '1ce7865c612bd8a55b4a07b2df89350e408d603a52763b5902b48143b8033903' "$STABLE_CHROME" | sha256sum -c -
           "$STABLE_CHROME" --version
           cd "$RUNNER_TEMP/r4-tls-01"
           node --input-type=module <<'JS'
