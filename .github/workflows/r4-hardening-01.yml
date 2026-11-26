@@ -151,7 +151,7 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/r4-types"
           cd "$RUNNER_TEMP/r4-types"
           printf '%s\n' '{"name":"panokit-hardening-types","version":"0.0.0","private":true,"dependencies":{"@types/node":"22.15.3"}}' > package.json
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          cp "$GITHUB_WORKSPACE/labs/r4-hardening-01/types.package-lock.json" package-lock.json
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           import assert from 'node:assert/strict';
@@ -164,13 +164,16 @@ jobs:
           JS
           sha256sum package-lock.json
           echo '97d0866a8f33452d41992552e1a6d15fec542c92028fa8ec92859feaf0815da8  package-lock.json' | sha256sum -c -
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          const b=fs.readFileSync('package-lock.json').toString('base64');
-          for(let i=0;i<b.length;i+=2048)console.log('PUBLIC_LOCK_types '+String(i/2048).padStart(4,'0')+' '+b.slice(i,i+2048));
-          JS
           npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
           echo '97d0866a8f33452d41992552e1a6d15fec542c92028fa8ec92859feaf0815da8  package-lock.json' | sha256sum -c -
+          npm audit --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/audit-types.json"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const a=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/audit-types.json'));
+          assert(!a.error);assert.equal(a.metadata.vulnerabilities.total,0);
+          console.log('AUDIT_RESULT '+JSON.stringify({kind:'types',counts:a.metadata.vulnerabilities}));
+          JS
           cd "$RUNNER_TEMP/r4-tls-01"
           ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --module commonjs --moduleResolution node --experimentalDecorators --emitDecoratorMetadata --esModuleInterop --typeRoots "$RUNNER_TEMP/r4-types/node_modules/@types" --types node sec01-sovereign-http-gate.ts sec01-sovereign-tls-gate.ts sec01-sovereign-sql-adapter.ts sec01-sovereign-sql-adapter-r3-original.ts
           echo 'SEMANTIC_TYPECHECK PASS (4 source files; strict, noEmit, skipLibCheck third-party declarations only)'
