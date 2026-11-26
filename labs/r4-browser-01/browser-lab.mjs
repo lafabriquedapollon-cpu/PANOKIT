@@ -110,7 +110,6 @@ try{
  writeFileSync(p('leaf.ext'),'subjectAltName=IP:127.0.0.1\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n');
  openssl(['x509','-req','-in',p('leaf.csr'),'-CA',p('ca.pem'),'-CAkey',p('ca.key'),'-CAcreateserial','-days','1','-sha256','-extfile',p('leaf.ext'),'-out',p('leaf.pem')]);
  openssl(['verify','-CAfile',p('ca.pem'),p('leaf.pem')]);
- const {createRequire}=await import('node:module');const req=createRequire(import.meta.url);
  req('reflect-metadata');const {Module}=req('@nestjs/common'),{NestFactory}=req('@nestjs/core');
  const {SEC01_LAB_DEPS,Sec01SovereignHttpGate}=req('./r4-compiled/sec01-sovereign-tls-gate.js');
  const {createSec01LabDeps}=req('./r4-compiled/sec01-sovereign-sql-adapter.js');
@@ -143,7 +142,7 @@ try{
  const url=BASE+'/sec01-lab/browser';
  await test('BROWSER-01 untrusted CA rejected by Chromium',async()=>{browser=await launch();const {page}=await pageFor();await assert.rejects(()=>page.goto(url),e=>/ERR_CERT_AUTHORITY_INVALID/.test(e.message));await browser.close();browser=null;contexts.length=0;});
  const nss=p('.pki/nssdb');mkdirSync(nss,{recursive:true,mode:0o700});
- execFileSync('certutil',['-N','--empty-password','-d','sql:'+nss],{stdio:'pipe'});
+ try{execFileSync('certutil',['-L','-d','sql:'+nss],{stdio:'pipe'});}catch{execFileSync('certutil',['-N','--empty-password','-d','sql:'+nss],{stdio:'pipe'});}
  execFileSync('certutil',['-A','-d','sql:'+nss,'-n','PANOKIT ephemeral CA','-t','C,,','-i',p('ca.pem')],{stdio:'pipe'});
  browser=await launch();report('CHROMIUM','READY',{version:browser.version()});
  const {c,page}=await pageFor();
