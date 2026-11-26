@@ -1,0 +1,195 @@
+name: R4-HARDENING-01
+on:
+  push:
+    branches: ['ci/r4-hardening-01']
+    paths:
+      - 'labs/r4-tls-01/**'
+      - 'labs/r4-browser-01/**'
+      - 'labs/r4-hardening-01/**'
+      - '.github/workflows/r4-hardening-01.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: r4-hardening-01
+  cancel-in-progress: false
+jobs:
+  hardening-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22.16.0'
+          package-manager-cache: false
+      - name: Prepare isolated lab and verify sources
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(uname -m)" = x86_64
+          test "$(node --version)" = v22.16.0
+          openssl version
+          mkdir -m 700 "$RUNNER_TEMP/r4-tls-01"
+          cp -a labs/r4-tls-01/. "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          sha256sum -c SHA256SUMS.txt
+          if test -f "$GITHUB_WORKSPACE/labs/r4-hardening-01/tls.package-lock.json"; then
+            cp "$GITHUB_WORKSPACE/labs/r4-hardening-01/tls.package-lock.json" package-lock.json
+          else
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          fi
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('package.json'));
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.lockfileVersion,3);
+          for(const [name,version] of Object.entries(p.dependencies)) assert.equal(l.packages['node_modules/'+name].version,version);
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');
+            assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          console.log('LOCK_INTEGRITY PASS');
+          JS
+          sha256sum package-lock.json
+          echo '51f45baa560d7ed7829e269011fbd936bb06b8177ed44bdacbedf5a894d4334f  package-lock.json' | sha256sum -c -
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          sha256sum package-lock.json
+      - name: Compile and execute original TLS tests
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check compile-tls.cjs
+          node --check tls-transport.mjs
+          node --check https-cases.mjs
+          node --check r4-tls-bind.mjs
+          node compile-tls.cjs
+          node --check r4-compiled/sec01-sovereign-tls-gate.js
+          node --check r4-compiled/sec01-sovereign-sql-adapter.js
+          sha256sum r4-compiled/*.js
+          node --test broker.test.mjs adapter.test.cjs tls-transport.test.mjs
+          node r4-tls-bind.mjs --disposable-lab
+      - name: Prepare pinned Chromium test runtime
+        run: |
+          set -euo pipefail
+          if ! command -v certutil >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends libnss3-tools
+          fi
+          mkdir -m 700 "$RUNNER_TEMP/r4-browser-deps"
+          cd "$RUNNER_TEMP/r4-browser-deps"
+          printf '%s\n' '{"name":"panokit-browser-lab","version":"0.0.0","private":true,"dependencies":{"playwright":"1.56.1"}}' > package.json
+          if test -f "$GITHUB_WORKSPACE/labs/r4-hardening-01/browser.package-lock.json"; then
+            cp "$GITHUB_WORKSPACE/labs/r4-hardening-01/browser.package-lock.json" package-lock.json
+          else
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          fi
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.lockfileVersion,3);
+          for(const name of ['playwright','playwright-core']) assert.equal(l.packages['node_modules/'+name].version,'1.56.1');
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');
+            assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          console.log('BROWSER_LOCK_INTEGRITY PASS');
+          JS
+          sha256sum package-lock.json
+          echo 'b9aed47e0fe207d2ba67beabd9e96ad9a63a91fd7059b4518b57c16be81e48b7  package-lock.json' | sha256sum -c -
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          sha256sum package-lock.json
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" ./node_modules/.bin/playwright install chromium
+      - name: Execute Chromium network ceremony
+        run: |
+          set -euo pipefail
+          test "$(git hash-object labs/r4-browser-01/browser-lab.mjs)" = 94f27fca7fe6927f766bc6b802c435645bad6653
+          cp labs/r4-browser-01/browser-lab.mjs "$RUNNER_TEMP/r4-tls-01/browser-lab.mjs"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check browser-lab.mjs
+          BROWSER_DEPS="$RUNNER_TEMP/r4-browser-deps" PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node browser-lab.mjs --disposable-lab
+      - name: Audit exact locked npm dependencies and export public lock metadata
+        if: always()
+        run: |
+          set -euo pipefail
+          for kind in tls browser; do
+            if test "$kind" = tls; then dir="$RUNNER_TEMP/r4-tls-01"; else dir="$RUNNER_TEMP/r4-browser-deps"; fi
+            cd "$dir"
+            node --input-type=module - "$kind" <<'JS'
+            import fs from 'node:fs';
+            import assert from 'node:assert/strict';
+            import {createHash} from 'node:crypto';
+            const kind=process.argv[2], raw=fs.readFileSync('package-lock.json'), l=JSON.parse(raw);
+            const expected={tls:'51f45baa560d7ed7829e269011fbd936bb06b8177ed44bdacbedf5a894d4334f',browser:'b9aed47e0fe207d2ba67beabd9e96ad9a63a91fd7059b4518b57c16be81e48b7'};
+            assert.equal(createHash('sha256').update(raw).digest('hex'),expected[kind]);
+            for(const [name,v] of Object.entries(l.packages)){
+              if(!name) continue;
+              const u=new URL(v.resolved);
+              assert.equal(u.origin,'https://registry.npmjs.org');
+              assert(!u.username&&!u.password&&!u.search&&!u.hash);
+              assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+            }
+            // Only public package metadata from previously verified exact lock bytes.
+            const b64=raw.toString('base64');
+            for(let i=0;i<b64.length;i+=2048)console.log('PUBLIC_LOCK_'+kind+' '+String(i/2048).padStart(4,'0')+' '+b64.slice(i,i+2048));
+            JS
+            code=0
+            npm audit --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/audit-$kind.json" || code=$?
+            node --input-type=module - "$kind" "$code" "$RUNNER_TEMP/audit-$kind.json" <<'JS'
+            import fs from 'node:fs';
+            import assert from 'node:assert/strict';
+            const [kind,code,file]=process.argv.slice(2), a=JSON.parse(fs.readFileSync(file));
+            assert(!a.error,'AUDIT_SERVICE_ERROR');
+            assert(a.metadata?.vulnerabilities,'AUDIT_MISSING_METADATA');
+            console.log('AUDIT_RESULT '+JSON.stringify({kind,exit:Number(code),counts:a.metadata.vulnerabilities,findings:Object.entries(a.vulnerabilities??{}).map(([name,v])=>({name,severity:v.severity,range:v.range,via:v.via.map(x=>typeof x==='string'?x:{source:x.source,title:x.title,url:x.url,severity:x.severity,range:x.range}),fixAvailable:v.fixAvailable}))}));
+            JS
+          done
+      - name: Semantic TypeScript check of all four original TS sources
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          test -d node_modules
+          # Keep the two certified runtime locks untouched. Types are isolated.
+          mkdir -m 700 "$RUNNER_TEMP/r4-types"
+          cd "$RUNNER_TEMP/r4-types"
+          printf '%s\n' '{"name":"panokit-hardening-types","version":"0.0.0","private":true,"dependencies":{"@types/node":"22.15.3"}}' > package.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.packages['node_modules/@types/node'].version,'22.15.3');
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            const u=new URL(v.resolved);assert.equal(u.origin,'https://registry.npmjs.org');assert(!u.username&&!u.password&&!u.search&&!u.hash);assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          JS
+          sha256sum package-lock.json
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          sha256sum package-lock.json
+          cd "$RUNNER_TEMP/r4-tls-01"
+          ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --module commonjs --moduleResolution node --experimentalDecorators --emitDecoratorMetadata --esModuleInterop --typeRoots "$RUNNER_TEMP/r4-types/node_modules/@types" --types node sec01-sovereign-http-gate.ts sec01-sovereign-tls-gate.ts sec01-sovereign-sql-adapter.ts sec01-sovereign-sql-adapter-r3-original.ts
+          echo 'SEMANTIC_TYPECHECK PASS (4 source files; strict, noEmit, skipLibCheck third-party declarations only)'
+      - name: Verify immutable sources and free ports
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          sha256sum -c SHA256SUMS.txt
+          node --input-type=module <<'JS'
+          import {createServer} from 'node:net';
+          for(const port of [55444,55445,55447]){
+            const s=createServer();
+            await new Promise((r,j)=>{s.once('error',j);s.listen(port,'127.0.0.1',r)});
+            await new Promise((r,j)=>s.close(e=>e?j(e):r()));
+            console.log('PORT_FREE',port);
+          }
+          JS
+          echo 'Synthetic lab only. No production TLS, certification or deployment.' >> "$GITHUB_STEP_SUMMARY"
