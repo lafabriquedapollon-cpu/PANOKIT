@@ -8,6 +8,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import pgDriver from 'pg';
 import {startPriceUiLab} from './quote-ui-broker.mjs';
 import {runGuestTransportLab} from './guest-ui-lab.mjs';
+import {runGuestReactLab} from './guest-react-lab.mjs';
 import {chromium} from '/tmp/panokit-playwright/node_modules/playwright/index.mjs';
 import {mkdirSync,writeFileSync} from 'node:fs';
 const {Client}=pgDriver;
@@ -51,6 +52,7 @@ try{
  ui=await startPriceUiLab({api:listener,fixture:request,css,master:readFileSync(process.env.J06_MASTER),clientSource:readFileSync(new URL('./quote-ui-client.js',import.meta.url),'utf8'),delayPickup:500});
  browser=await chromium.launch({headless:true});
  await runGuestTransportLab({browser,domain:guestDomain,connect:adapter,fixture:request,preview:readFileSync(process.env.J06_MASTER),admin});
+ await runGuestReactLab({browser,domain:guestDomain,connect:adapter,fixture:request,preview:readFileSync(process.env.J06_MASTER),admin,out});
  const report={sha:process.env.GITHUB_SHA,checks:[],captures:[]};
  const check=(id,ok)=>{report.checks.push({id,ok:!!ok});assert.ok(ok,id);};
  const wait=(p,state)=>p.locator('#app[data-state='+state+']').waitFor({state:'visible'});
