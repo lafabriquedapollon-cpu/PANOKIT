@@ -61,7 +61,7 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
    if(req.method==='GET'&&req.url==='/preview.svg'){
     if(!live(session)||session.busy||(session.stage!=='contact'&&!(upstream&&session.stage==='acknowledged'))||req.headers['sec-fetch-site']==='cross-site'){unavailable(res,403);return;}
     const rendered=upstream?session.visualBytes:bytes;if(!rendered){unavailable(res,403);return;}
-    session.previewServed=true;res.writeHead(200,{...headers,'content-type':'image/svg+xml'});res.end(rendered);return;
+    session.previewServed=true;res.writeHead(200,{...headers,'content-type':'image/svg+xml','content-security-policy':"default-src 'none'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"});res.end(rendered);return;
    }
    if(req.method!=='POST'||req.url!=='/action'||req.headers.origin!==origin||req.headers['content-type']!=='application/json'||req.headers['content-encoding']!==undefined ){unavailable(res,403);return;}
    if(session?.busy){unavailable(res);return;}
