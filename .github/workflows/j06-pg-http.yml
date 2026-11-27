@@ -1,7 +1,7 @@
 name: J06 B PostgreSQL and HTTP LAB (no deploy)
 on:
   push:
-    branches: [main, feature/j06-b-pg-http-lab-20261127]
+    branches: [main, feature/j06-b-pg-http-lab-20261127, feature/j06-c-validity-lab-20261127]
   pull_request:
     branches: [main]
 permissions:
