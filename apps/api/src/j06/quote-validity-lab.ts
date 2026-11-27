@@ -6,6 +6,7 @@ type Quote=Extract<QuoteResult,{status:"lab_quote"}>["quote"];
 type LeaseFailure=Extract<QuoteResult,{status:"unavailable"}>|{status:"unavailable";reason:"lease_unavailable"};
 export type LeaseResult=LeaseFailure|{status:"lab_lease";scope:"LAB";orderable:false;leaseToken:string;expiresAt:string;quote:Quote}|{status:"lab_valid";scope:"LAB";orderable:false;expiresAt:string;quote:Quote};
 export type GuestAdmissionResult=LeaseFailure|{status:"unavailable";reason:"contact_invalid";fields:readonly GuestField[]}|{status:"unavailable";reason:"admission_unavailable"}|{status:"lab_guest_admitted";scope:"LAB";orderable:false;receiptId:string};
+export type VisualConsentResult=LeaseFailure|{status:"unavailable";reason:"visual_mismatch"|"consent_unavailable"}|{status:"lab_visual_acknowledged";scope:"LAB";orderable:false;receiptId:string;visualVersion:string;visualDigest:string;statementVersion:"lab-visual-v1"};
 type Client=Awaited<ReturnType<QuoteLabConnection>>;
 const fail=(reason:"calculation_unavailable"|"lease_unavailable"):LeaseFailure=>({status:"unavailable",reason});
 const hash=(token:string)=>createHash("sha256").update(token,"utf8").digest("hex");
@@ -13,7 +14,7 @@ function port(c:Client):QuoteLabPort{return {readSnapshot:async s=>{
  const r=await c.query("select j06_private.read_snapshot($1,$2) as snapshot",[s.formatId,s.fulfillment.mode==="delivery"?s.fulfillment.destinationRef:null]);
  if(r.rows.length!==1)throw Error("SNAPSHOT");return r.rows[0].snapshot;
 }};}
-async function transaction<T extends LeaseResult|GuestAdmissionResult>(connect:QuoteLabConnection,fn:(c:Client)=>Promise<T>):Promise<T|LeaseFailure>{
+async function transaction<T extends LeaseResult|GuestAdmissionResult|VisualConsentResult>(connect:QuoteLabConnection,fn:(c:Client)=>Promise<T>):Promise<T|LeaseFailure>{
  let c:Client|undefined,started=false;
  try{
   c=await connect();const r=await c.query("select session_user::text as login,current_user::text as role,current_database() as db");
@@ -82,5 +83,33 @@ export async function admitLabGuest(input:unknown,sessionToken:unknown,connect:Q
   if(saved.rows.length!==1)throw Error("ADMISSION");
   if(saved.rows[0].saved!==true)return {status:"unavailable",reason:"admission_unavailable"};
   return {status:"lab_guest_admitted",scope:"LAB",orderable:false,receiptId};
+ });
+}
+
+/** LAB only. Trusted adapter supplies the current visual manifest from a server-side source.
+ * Browser echoes the exact version and digest it reviewed; no client authority over the manifest.
+ * This records an explicit acknowledgement, not legal identity, BAT approval or permission to pay. */
+function exactData(v:unknown,keys:readonly string[]):v is Record<string,unknown>{
+ return record(v)&&(Object.getPrototypeOf(v)===Object.prototype||Object.getPrototypeOf(v)===null)&&Reflect.ownKeys(v).length===keys.length&&keys.every(k=>Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)??{},"value"));
+}
+const receipt=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
+const visualVersion=(v:unknown):v is string=>typeof v==="string"&&/^lab-[a-z0-9-]{1,59}$/.test(v);
+export async function acknowledgeLabVisual(input:unknown,sessionToken:unknown,trustedManifest:unknown,connect:QuoteLabConnection):Promise<VisualConsentResult>{
+ if(!capability(sessionToken)||!exactData(input,["leaseToken","receiptId","visualVersion","visualDigest","statementVersion","locale","accepted"])||
+ !capability(input.leaseToken)||!receipt(input.receiptId)||!visualVersion(input.visualVersion)||!capability(input.visualDigest)||
+ input.statementVersion!=="lab-visual-v1"||(input.locale!=="fr"&&input.locale!=="ar")||input.accepted!==true)return {status:"unavailable",reason:"invalid_request"};
+ if(!exactData(trustedManifest,["receiptId","fingerprint","visualVersion","visualDigest"])||
+ !receipt(trustedManifest.receiptId)||!capability(trustedManifest.fingerprint)||!visualVersion(trustedManifest.visualVersion)||!capability(trustedManifest.visualDigest))return {status:"unavailable",reason:"visual_mismatch"};
+ const {leaseToken,receiptId,visualVersion:version,visualDigest,locale}=input;
+ if(leaseToken===sessionToken)return fail("lease_unavailable");
+ const tokenHash=hash(leaseToken),sessionHash=hash(sessionToken);
+ return transaction<VisualConsentResult>(connect,async c=>{
+  const lease=await readValidLease(c,tokenHash,sessionHash);
+  if(lease.status==="unavailable")return lease;
+  if(trustedManifest.receiptId!==receiptId||trustedManifest.fingerprint!==lease.quote.fingerprint||trustedManifest.visualVersion!==version||trustedManifest.visualDigest!==visualDigest)return {status:"unavailable",reason:"visual_mismatch"};
+  const saved=await c.query("select j06_private.record_guest_visual_consent($1,$2,$3::uuid,$4,$5,$6,$7) as saved",[tokenHash,sessionHash,receiptId,lease.quote.fingerprint,version,visualDigest,locale]);
+  if(saved.rows.length!==1)throw Error("CONSENT");
+  if(saved.rows[0].saved!==true)return {status:"unavailable",reason:"consent_unavailable"};
+  return {status:"lab_visual_acknowledged",scope:"LAB",orderable:false,receiptId,visualVersion:version,visualDigest,statementVersion:"lab-visual-v1"};
  });
 }
