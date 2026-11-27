@@ -1,0 +1,94 @@
+name: SEC01 FUE-G (no deploy)
+on:
+  push:
+    branches: [security/sec01-fue-g]
+  pull_request:
+    branches: [security/sec01-compose-d]
+permissions:
+  contents: read
+jobs:
+  compose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: "10.22.0"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.13.1"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - name: Confirm no candidate product changes
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor acbf17e515f3d31f6f12175f02165a145d058b3c HEAD
+          actual=$(git diff --name-only acbf17e515f3d31f6f12175f02165a145d058b3c HEAD | sort)
+          expected=$(printf '%s\n' .github/workflows/sec01-fue-g.yml apps/api/security/sec01-compose/fue-g.mjs apps/api/security/sec01-compose/fue-ui.html | sort)
+          test "$actual" = "$expected"
+          echo 'EXACT_CANDIDATE_BOUNDARY PASS'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+      - name: Verify provenance and compose one disposable database
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(node --version)" = v22.16.0
+          export COMPOSE_PORTS="$GITHUB_WORKSPACE/apps/api/dist/j04/sec01-compose-ports.js"
+          test -f "$COMPOSE_PORTS"
+          export COMPOSE_RUNTIME="$GITHUB_WORKSPACE/apps/api/dist/j04/sec01-runtime.js"
+          test -f "$COMPOSE_RUNTIME"
+          cd apps/api/security/sec01-compose
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          const p=JSON.parse(fs.readFileSync('PROVENANCE.json'));
+          for(const [name,source] of Object.entries(p.sources)) assert.equal(createHash('sha256').update(fs.readFileSync(name)).digest('hex'),source.sha256);
+          const lock=JSON.parse(fs.readFileSync('package-lock.json'));
+          for(const [name,v] of Object.entries(lock.packages)) if(name){ assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org'); assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/); }
+          console.log('SOURCE_AND_LOCK_PROVENANCE PASS');
+          JS
+          cp -a . "$RUNNER_TEMP/sec01-compose"
+          cd "$RUNNER_TEMP/sec01-compose"
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          node compile-tls.cjs
+          export COMPOSE_RESILIENCE="$GITHUB_WORKSPACE/apps/api/dist/j04/sec01-resilience.js"
+          test -f "$COMPOSE_RESILIENCE"
+          if ! command -v certutil >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends libnss3-tools
+          fi
+          export BROWSER_DEPS="$RUNNER_TEMP/sec01-browser-deps"
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/sec01-chromium"
+          mkdir -m 700 "$BROWSER_DEPS"
+          cp "$GITHUB_WORKSPACE/apps/api/security/sec01-compose/browser.package-lock.json" "$BROWSER_DEPS/package-lock.json"
+          cd "$BROWSER_DEPS"
+          printf '%s\n' '{"name":"panokit-browser-lab","version":"0.0.0","private":true,"dependencies":{"playwright":"1.65.1"}}' > package.json
+          echo '089dd64d2f709c5ac17b105afb5d1ef79c2af98d6a9afe597955b431d9b90c28  package-lock.json' | sha256sum -c -
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          ./node_modules/.bin/playwright install chromium
+          mapfile -t shells < <(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome-headless-shell)
+          test "${#shells[@]}" -eq 1
+          printf '%s  %s\n' '24eb0a14de64ab0c9c2e283a5512ca817db64af8fd853cdb4d818f19a8e23b9b' "${shells[0]}" | sha256sum -c -
+          cd "$RUNNER_TEMP/sec01-compose"
+          export FUE_EVIDENCE="$RUNNER_TEMP/sec01-fue-proof"
+          node --check fue-g.mjs
+          node fue-g.mjs --disposable-lab
+      - name: Upload sanitized FUE evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sec01-fue-proof
+          path: ${{ runner.temp }}/sec01-fue-proof
+          if-no-files-found: error
+          retention-days: 30
