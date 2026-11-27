@@ -1,0 +1,151 @@
+.studio-page{min-height:100vh;background:#fff;color:#141414;font-family:Arial,Helvetica,sans-serif}.studio-header{border-bottom:1px solid #e7e3dd;padding:20px clamp(16px,4vw,54px);display:flex;align-items:center;justify-content:space-between;gap:16px}.studio-brand{font-size:29px;font-weight:900;letter-spacing:-1.4px;position:relative}.studio-stroke{position:absolute;left:2px;bottom:-7px;width:66px;height:4px;background:#f46b0a;transform:rotate(-3deg);border-radius:50%}.studio-back{font-size:14px;font-weight:700}.studio-shell{max-width:1440px;margin:auto;padding:36px clamp(14px,3.6vw,52px) 70px}.studio-heading{margin-bottom:30px}.studio-heading>p:first-child{font-size:11px;font-weight:800;letter-spacing:.12em;color:#b84b00}.studio-heading h1{font-size:clamp(29px,4vw,48px);letter-spacing:-.05em;margin:12px 0}.studio-heading>p:last-child{color:#595959;line-height:1.5;max-width:680px}.studio-layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:25px;align-items:start}.studio-panel,.studio-preview{border:1px solid #e7e3dd;border-radius:19px;padding:23px;box-shadow:0 8px 18px #0000000c;min-width:0}.studio-panel h2,.studio-preview h2{font-size:19px;margin:0 0 18px}.studio-fields label{display:block;font-size:13px;font-weight:700;margin:18px 0 7px}.studio-fields input:not([type=file]),.studio-fields textarea{width:100%;border:1px solid #d4d0c9;border-radius:9px;padding:11px 12px;font:inherit;resize:vertical;background:#fff;color:#141414}.studio-fields input[type=file]{font-size:12px;width:100%;max-width:100%}.studio-fields :is(input,textarea):focus-visible,.studio-page button:focus-visible{outline:3px solid #f46b0a;outline-offset:2px}.studio-text-button{margin-top:10px;border:0;background:transparent;text-decoration:underline;cursor:pointer;color:#b84b00}.studio-preview-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.studio-preview-head span{font-size:12px;color:#595959}.studio-views{display:flex;flex-wrap:wrap;gap:9px;margin:10px 0 18px}.studio-views button{background:#fff;border:1px solid #d5d1c9;padding:10px 15px;border-radius:9px;cursor:pointer;font-weight:700;min-height:44px}.studio-views button[aria-pressed=true]{background:#141414;color:#fff;border-color:#141414}.studio-sign{width:100%;height:auto;display:block;border-radius:10px}.studio-caption{font-size:12px;color:#595959;margin:11px 0 24px}.studio-templates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.studio-template{border:2px solid #e7e3dd;border-radius:12px;padding:9px;background:white;text-align:left;cursor:pointer;min-width:0}.studio-template[aria-pressed=true]{border-color:#b84b00;box-shadow:0 0 0 1px #b84b00}.studio-template span{display:block;font-size:12px;font-weight:700;margin-top:7px}.studio-info,.studio-warning{padding:12px;border-radius:9px;font-size:13px;line-height:1.5}.studio-info{background:#f7f5f0}.studio-warning{background:#fff1d9;border:1px solid #e5ae55;color:#643900}.studio-gate{margin-top:20px;border:1px solid #e7e3dd;background:#faf8f5;padding:18px;border-radius:12px}.studio-gate strong{font-size:14px}.studio-gate p{font-size:13px;color:#595959;line-height:1.5}.studio-gate button{padding:13px;border:0;border-radius:8px;background:#ddd;color:#555;cursor:not-allowed;font-weight:700}@media(max-width:850px){.studio-layout{grid-template-columns:1fr}.studio-panel,.studio-preview{padding:18px}}@media(max-width:390px){.studio-shell{padding:25px 12px 45px}.studio-preview-head{align-items:flex-start;flex-direction:column}.studio-views button{flex:1;padding:10px 5px;font-size:12px}.studio-templates{gap:8px}.studio-template{padding:5px}.studio-template span{font-size:11px}}
+/* At 200% zoom the effective CSS viewport is narrow; stack panels and allow long controls to shrink. */
+.studio-page{width:100%;min-width:0;overflow-wrap:anywhere}
+.studio-header>*{min-width:0}
+.studio-preview-head>*{min-width:0}
+.studio-gate button{max-width:100%;white-space:normal}
+@media(max-width:600px){.studio-header{flex-wrap:wrap}.studio-shell{padding-inline:12px}.studio-panel,.studio-preview{padding:12px}.studio-templates{grid-template-columns:1fr}.studio-views button{min-width:0;flex:1 1 100px}.studio-layout{gap:14px}}
+
+/* Zoom/reflow: preserve usable touch targets and legible descriptions at narrow CSS widths. */
+.studio-page :is(a,input,textarea,button):focus-visible{outline:3px solid #a84600;outline-offset:3px}
+.studio-template{min-height:54px}
+.studio-template span{line-height:1.5}
+.studio-caption,.studio-preview-head span{line-height:1.55}
+@media(max-width:600px){.studio-heading h1{font-size:clamp(25px,7vw,36px);line-height:1.16;letter-spacing:-.025em}.studio-preview-head{flex-wrap:wrap}.studio-views{display:grid;grid-template-columns:1fr;gap:8px}.studio-views button{width:100%;font-size:14px;padding:12px;min-height:48px}.studio-template{padding:12px;min-height:62px}.studio-template span{font-size:14px}.studio-gate{padding:12px}.studio-gate button{width:100%;line-height:1.5;min-height:48px}.studio-fields input[type=file]{font-size:14px}.studio-caption{font-size:14px}}
+
+/* At 200% browser zoom, give each composition a legible minimum preview width.
+   The gallery scrolls independently instead of overflowing the document. */
+@media(max-width:600px){.studio-templates{display:flex;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x mandatory;scroll-padding-inline:2px;padding:3px 3px 12px;gap:12px}.studio-template{flex:0 0 240px;scroll-snap-align:start}.studio-template .studio-sign{width:100%;height:auto}.studio-template span{font-size:15px}.studio-templates:focus-within{outline-offset:3px}}
+
+/* Quote remains disabled; keep the label readable in 200% zoom/reflow. */
+.studio-devis-short{display:none}
+@media(max-width:600px){.studio-devis-long{display:none}.studio-devis-short{display:inline}.studio-gate button{font-size:13px;overflow-wrap:normal;word-break:normal;hyphens:none;padding-inline:6px}}
+
+.studio-gallery-hint{display:none;color:#595959;font-size:13px;line-height:1.5;margin:0 0 10px}
+@media(max-width:600px){.studio-gallery-hint{display:block}}
+
+/* D3: improve orientation and keyboard discovery of the horizontal composition gallery. */
+@media(max-width:600px){
+  .studio-gallery-hint{font-size:14px;font-weight:600;color:#454545}
+  .studio-templates{scrollbar-width:auto;scrollbar-color:#a84600 #f2eee7;scroll-padding-inline:12px}
+  .studio-templates::-webkit-scrollbar{height:9px}
+  .studio-templates::-webkit-scrollbar-thumb{background:#a84600;border-radius:20px}
+  .studio-templates::-webkit-scrollbar-track{background:#f2eee7;border-radius:20px}
+  .studio-template[aria-pressed=true]{box-shadow:0 0 0 2px #a84600}
+}
+@media(max-width:260px){
+  .studio-template{flex-basis:210px}
+  .studio-preview,.studio-panel{padding:10px}
+  .studio-gate button{font-size:14px;line-height:1.45}
+}
+
+/* J05 D3: accessible, responsive preset picker. */
+.studio-palette{border:1px solid #e7e3dd;border-radius:12px;padding:14px;margin:0 0 18px;min-width:0}
+.studio-palette legend{font-size:14px;font-weight:800;padding:0 5px}
+.studio-palette-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:9px}
+.studio-palette-option{display:flex;flex-direction:column;align-items:center;gap:7px;min-height:78px;padding:9px 5px;border:2px solid #dedbd5;border-radius:10px;background:#fff;color:#141414;font-size:12px;font-weight:700;cursor:pointer}
+.studio-palette-option[aria-pressed=true]{border-color:#a84600;box-shadow:0 0 0 1px #a84600}
+.studio-palette-swatch{display:grid;place-items:center;width:46px;height:33px;border:3px solid;border-radius:5px;font-size:16px;font-weight:800}
+.studio-palette>p{font-size:12px;line-height:1.5;color:#595959;margin:12px 0 0}
+@media(max-width:600px){.studio-palette{padding:10px}.studio-palette-options{grid-template-columns:repeat(2,minmax(0,1fr))}.studio-palette-option{font-size:14px;min-height:78px}.studio-palette>p{font-size:14px}}
+
+/* J05 D3: three independently adjustable colors; keyboard-accessible native color inputs. */
+.studio-custom-colors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:15px}
+.studio-custom-colors label{display:flex;flex-direction:column;justify-content:space-between;gap:8px;font-size:13px;font-weight:700;margin:0;min-width:0}
+.studio-color-control{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.studio-color-control input[type=color]{width:54px;height:44px;min-width:54px;padding:3px;border:1px solid #777;border-radius:8px;cursor:pointer;background:#fff}
+.studio-color-control output{font-family:monospace;font-size:12px;color:#454545}
+.studio-color-reset{margin-top:12px;border:1px solid #a84600;background:#fff;color:#843500;border-radius:8px;padding:10px 12px;min-height:44px;font-weight:700;cursor:pointer}
+@media(max-width:650px){.studio-custom-colors{grid-template-columns:1fr}.studio-custom-colors label{flex-direction:row;align-items:center}.studio-color-control{justify-content:flex-end}.studio-color-control output{min-width:68px}}
+
+/* D3 P1: 200% zoom (~195 CSS px) must not fragment palette labels or HEX values. */
+.studio-palette-option{overflow-wrap:normal;word-break:normal;hyphens:none;line-height:1.4}
+.studio-color-control output{white-space:nowrap;overflow-wrap:normal;word-break:keep-all}
+@media(max-width:340px){
+  .studio-palette-options{grid-template-columns:minmax(0,1fr)}
+  .studio-palette-option{flex-direction:row;justify-content:flex-start;gap:12px;min-height:58px;padding:7px 9px;text-align:left;font-size:14px}
+  .studio-palette-swatch{flex:0 0 46px}
+  .studio-custom-colors label{flex-direction:column;align-items:stretch;gap:6px;line-height:1.4}
+  .studio-color-control{justify-content:flex-start;flex-wrap:nowrap;gap:9px}
+  .studio-color-control output{font-size:13px;min-width:0}
+  .studio-color-reset{width:100%;white-space:normal}
+}
+
+/* Zoom 200% uses a 390px CSS viewport in browser QA: stack controls at mobile widths. */
+@media(max-width:650px){
+  .studio-custom-colors label{flex-direction:column;align-items:stretch;gap:6px;overflow-wrap:normal;word-break:normal;hyphens:none}
+  .studio-custom-colors label>span:first-child{display:block;max-width:100%;overflow-wrap:normal;word-break:normal}
+  .studio-color-control{justify-content:flex-start;flex-wrap:nowrap;gap:10px}
+  .studio-color-control output{white-space:nowrap;min-width:0;overflow-wrap:normal;word-break:keep-all}
+}
+
+/* D3 visual quality: keep the sign legible at 200% browser zoom without page overflow. */
+.studio-main-sign-scroll{max-width:100%;min-width:0;overflow-x:auto;overscroll-behavior-inline:contain;scrollbar-width:thin;scrollbar-color:#a84600 #f2eee7;border-radius:10px}
+.studio-main-sign-scroll:focus-visible{outline:3px solid #a84600;outline-offset:3px}
+.studio-zoom-hint{display:none}
+.studio-caption,.studio-palette>p,.studio-preview-head span{font-size:14px;line-height:1.6}
+.studio-heading>p:first-child{font-size:12px}
+@media(max-width:650px){
+  .studio-main-sign-scroll .studio-sign{width:520px;max-width:none;height:auto}
+  .studio-zoom-hint{display:block;font-size:14px;line-height:1.5;color:#454545;margin:4px 0 9px}
+}
+
+
+/* J05 D3 P1: standard mobile always shows the complete sign.
+   At narrow effective layout widths (including CSS zoom used by browser QA),
+   a container query enables the separate, keyboard-scrollable detail view. */
+.studio-preview{container-type:inline-size}
+@media(max-width:650px){
+  .studio-main-sign-scroll .studio-sign{width:100%;max-width:100%}
+  .studio-zoom-hint{display:none}
+}
+@container (max-width:260px){
+  .studio-main-sign-scroll .studio-sign{width:520px;max-width:none}
+  .studio-zoom-hint{display:block;font-size:14px;line-height:1.5;color:#454545;margin:4px 0 9px}
+}
+
+/* J05 D3 visual refinement: compact view switcher on ordinary phones.
+   Preserve full-width 44px+ targets in narrow reflow/zoom layouts. */
+@media (min-width:350px) and (max-width:600px){
+  .studio-views{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .studio-views button{font-size:12px;padding:10px 4px;min-height:48px}
+}
+
+/* J05 FR/AR: keep navigation controls usable in both reading directions. */
+.studio-header-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.studio-language{display:inline-flex;gap:3px;border:1px solid #d9d3c9;border-radius:9px;padding:3px;direction:ltr}
+.studio-language button{min-height:44px;min-width:48px;padding:7px 10px;border:0;border-radius:6px;background:transparent;color:#202020;font:inherit;cursor:pointer}
+.studio-language button[aria-pressed="true"]{background:#242424;color:#fff}
+.studio-language button:focus-visible{outline:3px solid #e87620;outline-offset:2px}
+.studio-page[dir="rtl"] .studio-heading,.studio-page[dir="rtl"] .studio-fields,.studio-page[dir="rtl"] .studio-preview{text-align:start}
+.studio-page[dir="rtl"] .studio-sign{direction:ltr}
+@media(max-width:650px){.studio-header-actions{gap:6px}.studio-language button{min-width:44px;padding:6px}}
+
+/* Accessible custom file chooser: native input remains keyboard/screen-reader operable. */
+.studio-upload{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
+.studio-upload-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.studio-upload-button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:9px 14px;border:1px solid #777;border-radius:8px;background:#fff;color:#202020;cursor:pointer;font:inherit}
+.studio-upload-input:focus-visible + .studio-upload-button{outline:3px solid #e87620;outline-offset:3px}
+.studio-upload-name{font-size:14px;overflow-wrap:anywhere;min-width:0;flex:1 1 140px}
+
+/* Override legacy .studio-fields input[type=file]{width:100%}: hidden input must not expand document width. */
+.studio-fields input.studio-upload-input[type=file]{position:absolute;width:1px;height:1px;max-width:1px;padding:0;margin:0;border:0;clip-path:inset(50%);opacity:0}
+.studio-fields .studio-upload-button{display:inline-flex;margin:0}
+
+/* J05 P1 mobile: gallery navigation is explicit and compact; keep preview prominent. */
+.studio-gallery-navigation{display:none}
+@media(max-width:600px){
+  .studio-shell{padding-top:22px}
+  .studio-heading{margin-bottom:18px}
+  .studio-heading h1{margin:8px 0}
+  .studio-fields label{margin-top:12px}
+  .studio-gallery-navigation{display:flex;flex-direction:column;gap:8px;margin:8px 0 12px}
+  .studio-gallery-navigation .studio-gallery-hint{display:block;margin:0;font-size:13px;line-height:1.45}
+  .studio-gallery-controls{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:10px;background:#f7f5f0}
+  .studio-gallery-controls span{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
+  .studio-gallery-controls button{min-width:48px;min-height:44px;border:1px solid #b7afa3;border-radius:9px;background:#fff;color:#242424;font-size:26px;line-height:1;cursor:pointer}
+  .studio-gallery-controls button:disabled{opacity:.38;cursor:not-allowed}
+  .studio-templates{scroll-padding-inline:12px}
+  .studio-template{flex-basis:min(240px,78%)}
+}
+@media(max-width:340px){.studio-template{flex-basis:210px}}

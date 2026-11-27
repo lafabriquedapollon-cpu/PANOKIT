@@ -1,0 +1,93 @@
+{
+  "derived": {
+    "compose-a.mjs": {
+      "original_sha256": "a933e37abfc577c9d3ca8551896997536b6c926e1b31204e96178b9759ffd9df",
+      "source": "labs/r4-rate-limit/rate-lab.mjs"
+    }
+  },
+  "product_base": "81b9952444723caa80125b10c3fca0938391e167",
+  "r4_commit": "19f70ac0f655ee7289656508c11c72786930eb6a",
+  "scope": "disposable only; no live route registration",
+  "sources": {
+    "ceremony-broker.mjs": {
+      "sha256": "77fb0ddeb189ea28df6ea938d0ff13830296b2789905f5bc825b92f586d33abc",
+      "source": "labs/r4-tls-01/ceremony-broker.mjs"
+    },
+    "compile-tls.cjs": {
+      "sha256": "b7f831606219ed8968a681b17ab1f0791697e1f62c12f61354bc05c242ff3be7",
+      "source": "labs/r4-tls-01/compile-tls.cjs"
+    },
+    "credential-maintenance.sql": {
+      "sha256": "98169f994493fcdb21c41017dacadab8e4fc6a66a4a7a3e10dcfdb9c697f7284",
+      "source": "labs/r4-mfa-lifecycle-b/credential-maintenance.sql"
+    },
+    "expiry-worker.sql": {
+      "sha256": "f7ce0540acfddae6f6aeb1f1f65479fe49ee7b7d9585f65e1e1b3c50c5985ae7",
+      "source": "labs/r4-resilience-b/expiry-worker.sql"
+    },
+    "guarded-broker.mjs": {
+      "sha256": "68641618712face1a9ebdeb24b887198f3fa54cc388a23094f2e6871aa8b0057",
+      "source": "labs/r4-mfa-hardening/guarded-broker.mjs"
+    },
+    "https-cases.mjs": {
+      "sha256": "94e8eb3c472ae1918b0892f02cfc3b11ca1083c2d8e2771622508b705ccb4a90",
+      "source": "labs/r4-tls-01/https-cases.mjs"
+    },
+    "lifecycle-lab.sql": {
+      "sha256": "8da3a539bdfb5e42a1efac04e6164bc5f146003fd2b374fc199712137522becb",
+      "source": "labs/r4-tls-01/lifecycle-lab.sql"
+    },
+    "login-budget.sql": {
+      "sha256": "e507506aa0a6bf4e846f424a85c63c898a35e005840de8a39dc8bc12257ffdee",
+      "source": "labs/r4-rate-limit/login-budget.sql"
+    },
+    "login-guard.mjs": {
+      "sha256": "e8fea47e7827f183b83e2639e70a4760370ece1e911a9bef6cfaa7af22e062d6",
+      "source": "labs/r4-rate-limit/login-guard.mjs"
+    },
+    "maintenance-recovery.sql": {
+      "sha256": "3a2fbe2d7e87c7ff00f72827561330dfd9b45b659028987fa607dab13b32e14f",
+      "source": "labs/r4-resilience-a/maintenance-recovery.sql"
+    },
+    "mfa-helpers.mjs": {
+      "sha256": "8ace15b7e713131d68b54aa0ab39e9477f7cb08aab759a312d9b552cfbcfe734",
+      "source": "labs/r4-tls-01/mfa-helpers.mjs"
+    },
+    "package-lock.json": {
+      "sha256": "51f45baa560d7ed7829e269011fbd936bb06b8177ed44bdacbedf5a894d4334f",
+      "source": "labs/r4-hardening-01/tls.package-lock.json"
+    },
+    "package.json": {
+      "sha256": "bcea6fbe1fa5268dbb1dce79bee4421885a339470b2794856d5666ab5fedc629",
+      "source": "labs/r4-tls-01/package.json"
+    },
+    "r2-lab.sql": {
+      "sha256": "bc64c21343f7094abfb313050e2607b28a17b9821cc194ab88be706ae36228c4",
+      "source": "labs/r4-tls-01/r2-lab.sql"
+    },
+    "sec01-sovereign-http-gate.ts": {
+      "sha256": "c894ba2ed6dc5857b12bab8c545a242a6bae029c544ef0d22d904d6e96f4b2b8",
+      "source": "labs/r4-tls-01/sec01-sovereign-http-gate.ts"
+    },
+    "sec01-sovereign-sql-adapter-r3-original.ts": {
+      "sha256": "652513d0d72b4e432bd79a77dddf2bf4b6a16b80b8de24fd40b48964ff3e592f",
+      "source": "labs/r4-tls-01/sec01-sovereign-sql-adapter-r3-original.ts"
+    },
+    "sec01-sovereign-sql-adapter.ts": {
+      "sha256": "c97b6f1fa2d45452172dff8fadc05d2766bd068f646b4c0c4288b394d6252664",
+      "source": "labs/r4-tls-01/sec01-sovereign-sql-adapter.ts"
+    },
+    "sec01-sovereign-tls-gate.ts": {
+      "sha256": "002d0226950447f791c6a1113f0e6385615346104e733d1ca47d8b5ff1b43968",
+      "source": "labs/r4-tls-01/sec01-sovereign-tls-gate.ts"
+    },
+    "tls-transport.mjs": {
+      "sha256": "5a5c6c60978ee911956c8d6990fda1b1e4fa73b745fd642f29f29244e64d00f6",
+      "source": "labs/r4-tls-01/tls-transport.mjs"
+    },
+    "totp-guard.sql": {
+      "sha256": "18dbc49a6bab5189da300bf19d6bde812d2c52d483a17b830ecdc2f6b0ab31e9",
+      "source": "labs/r4-mfa-hardening/totp-guard.sql"
+    }
+  }
+}
