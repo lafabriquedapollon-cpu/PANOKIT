@@ -1,0 +1,335 @@
+name: R4-RATE-LIMIT
+on:
+  push:
+    branches: ['ci/r4-rate-limit']
+    paths:
+      - 'labs/r4-tls-01/**'
+      - 'labs/r4-browser-01/**'
+      - 'labs/r4-hardening-01/**'
+      - 'labs/r4-hardening-02/**'
+      - 'labs/r4-mfa-hardening/**'
+      - 'labs/r4-mfa-lifecycle/**'
+      - 'labs/r4-mfa-lifecycle-b/**'
+      - 'labs/r4-resilience-a/**'
+      - 'labs/r4-resilience-b/**'
+      - 'labs/r4-rate-limit/**'
+      - '.github/workflows/r4-rate-limit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: r4-rate-limit
+  cancel-in-progress: false
+jobs:
+  hardening-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22.16.0'
+          package-manager-cache: false
+      - name: Prepare isolated lab and verify sources
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(uname -m)" = x86_64
+          test "$(node --version)" = v22.16.0
+          openssl version
+          mkdir -m 700 "$RUNNER_TEMP/r4-tls-01"
+          cp -a labs/r4-tls-01/. "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          sha256sum -c SHA256SUMS.txt
+          cp "$GITHUB_WORKSPACE/labs/r4-hardening-01/tls.package-lock.json" package-lock.json
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('package.json'));
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.lockfileVersion,3);
+          for(const [name,version] of Object.entries(p.dependencies)) assert.equal(l.packages['node_modules/'+name].version,version);
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');
+            assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          console.log('LOCK_INTEGRITY PASS');
+          JS
+          sha256sum package-lock.json
+          echo '51f45baa560d7ed7829e269011fbd936bb06b8177ed44bdacbedf5a894d4334f  package-lock.json' | sha256sum -c -
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          sha256sum package-lock.json
+      - name: Compile and execute original TLS tests
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check compile-tls.cjs
+          node --check tls-transport.mjs
+          node --check https-cases.mjs
+          node --check r4-tls-bind.mjs
+          node compile-tls.cjs
+          node --check r4-compiled/sec01-sovereign-tls-gate.js
+          node --check r4-compiled/sec01-sovereign-sql-adapter.js
+          sha256sum r4-compiled/*.js
+          node --test broker.test.mjs adapter.test.cjs tls-transport.test.mjs
+          node r4-tls-bind.mjs --disposable-lab
+      - name: Prepare pinned Chromium test runtime
+        run: |
+          set -euo pipefail
+          if ! command -v certutil >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends libnss3-tools
+          fi
+          mkdir -m 700 "$RUNNER_TEMP/r4-browser-deps"
+          cd "$RUNNER_TEMP/r4-browser-deps"
+          printf '%s\n' '{"name":"panokit-browser-lab","version":"0.0.0","private":true,"dependencies":{"playwright":"1.65.1"}}' > package.json
+          cp "$GITHUB_WORKSPACE/labs/r4-hardening-02/browser.package-lock.json" package-lock.json
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.lockfileVersion,3);
+          for(const name of ['playwright','playwright-core']) assert.equal(l.packages['node_modules/'+name].version,'1.65.1');
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');
+            assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          console.log('BROWSER_LOCK_INTEGRITY PASS');
+          JS
+          sha256sum package-lock.json
+          echo '089dd64d2f709c5ac17b105afb5d1ef79c2af98d6a9afe597955b431d9b90c28  package-lock.json' | sha256sum -c -
+          echo '089dd64d2f709c5ac17b105afb5d1ef79c2af98d6a9afe597955b431d9b90c28  package-lock.json' > "$RUNNER_TEMP/r4-browser-lock.sha256"
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          sha256sum package-lock.json
+          sha256sum -c "$RUNNER_TEMP/r4-browser-lock.sha256"
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" ./node_modules/.bin/playwright install chromium
+          mapfile -t shells < <(find "$RUNNER_TEMP/r4-chromium" -type f -name chrome-headless-shell)
+          test "${#shells[@]}" -eq 1
+          printf '%s  %s\n' '24eb0a14de64ab0c9c2e283a5512ca817db64af8fd853cdb4d818f19a8e23b9b' "${shells[0]}" | sha256sum -c -
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node --input-type=module <<'JS'
+          import {chromium} from 'playwright';
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          const meta=JSON.parse(fs.readFileSync('node_modules/playwright-core/browsers.json'));
+          const entry=meta.browsers.find(x=>x.name==='chromium');
+          assert.equal(entry.browserVersion,'159.0.8154.6');
+          const b=await chromium.launch({headless:true});
+          try{
+            assert.equal(b.version(),'159.0.8154.6');
+            console.log('BROWSER_BINARY_VERSION '+b.version());
+            const prefix=process.env.PLAYWRIGHT_BROWSERS_PATH+'/';
+            const candidates=[];
+            for(const pid of fs.readdirSync('/proc').filter(p=>/^\d+$/.test(p))){
+              try{
+                const exe=fs.readlinkSync('/proc/'+pid+'/exe');
+                if(!exe.startsWith(prefix))continue;
+                const status=fs.readFileSync('/proc/'+pid+'/status','utf8');
+                const parent=status.match(/^PPid:\s+(\d+)$/m);
+                if(!parent||Number(parent[1])!==process.pid)continue;
+                const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\0').filter(Boolean);
+                if(!args.length||args.some(a=>a.startsWith('--type=')))continue;
+                candidates.push({exe,args});
+              }catch{}
+            }
+            console.log('BROWSER_DIRECT_CHILD_COUNT '+candidates.length);
+            assert.equal(candidates.length,1,'UNIQUE_BROWSER_PROCESS');
+            const {exe,args}=candidates[0];
+            assert(!args.some(a=>a.startsWith('--ignore-certificate-errors')||a==='--disable-web-security'||a==='--allow-insecure-localhost'));
+            const digest=createHash('sha256').update(fs.readFileSync(exe)).digest('hex');
+            assert.equal(digest,'24eb0a14de64ab0c9c2e283a5512ca817db64af8fd853cdb4d818f19a8e23b9b');
+            console.log('BROWSER_BINARY_SHA256 '+digest);
+            console.log('BROWSER_SANDBOX_DISABLED '+args.includes('--no-sandbox'));
+          }finally{await b.close();}
+          JS
+      - name: Execute Chromium network ceremony
+        run: |
+          set -euo pipefail
+          test "$(git hash-object labs/r4-browser-01/browser-lab.mjs)" = 94f27fca7fe6927f766bc6b802c435645bad6653
+          cp labs/r4-browser-01/browser-lab.mjs "$RUNNER_TEMP/r4-tls-01/browser-lab.mjs"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check browser-lab.mjs
+          BROWSER_DEPS="$RUNNER_TEMP/r4-browser-deps" PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node browser-lab.mjs --disposable-lab
+      - name: Qualify exact current stable Chrome for Testing
+        run: |
+          set -euo pipefail
+          version=158.0.8127.88
+          dest="$RUNNER_TEMP/r4-stable-chrome"
+          mkdir -m 700 "$dest"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 --max-time 60 "https://googlechromelabs.github.io/chrome-for-testing/$version.json" -o "$dest/manifest.json"
+          node --input-type=module - "$dest/manifest.json" <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const m=JSON.parse(fs.readFileSync(process.argv[2]));
+          assert.equal(m.version,'158.0.8127.88');
+          const u=m.downloads.chrome.filter(x=>x.platform==='linux64');
+          assert.equal(u.length,1);
+          assert.equal(u[0].url,'https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux64/chrome-linux64.zip');
+          console.log('STABLE_MANIFEST PASS '+m.version);
+          JS
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 --retry 2 --max-time 180 "https://storage.googleapis.com/chrome-for-testing-public/$version/linux64/chrome-linux64.zip" -o "$dest/chrome.zip"
+          printf '%s  %s\n' '59e3b43f8b3aaa292238fbdcfb36a93127debd53e212510dcdc2cc8812b4b57e' "$dest/chrome.zip" | sha256sum -c -
+          unzip -q "$dest/chrome.zip" -d "$dest"
+          export STABLE_CHROME="$dest/chrome-linux64/chrome"
+          test -x "$STABLE_CHROME"
+          printf '%s  %s\n' '1ce7865c612bd8a55b4a07b2df89350e408d603a52763b5902b48143b8033903' "$STABLE_CHROME" | sha256sum -c -
+          "$STABLE_CHROME" --version
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const source=fs.readFileSync('browser-lab.mjs','utf8');
+          const from='chromium.launch({headless:true,env:{...process.env,HOME:home},timeout:30000})';
+          const to='chromium.launch({headless:true,executablePath:process.env.STABLE_CHROME,env:{...process.env,HOME:home},timeout:30000})';
+          assert.equal(source.split(from).length,2);
+          const versionFrom="browser=await launch();report('CHROMIUM','READY',{version:browser.version()});";
+          const versionTo="browser=await launch();assert.equal(browser.version(),'158.0.8127.88');report('CHROMIUM','READY',{version:browser.version()});";
+          assert.equal(source.split(versionFrom).length,2);
+          fs.writeFileSync('browser-stable-lab.mjs',source.replace(from,to).replace(versionFrom,versionTo),{flag:'wx'});
+          console.log('STABLE_HARNESS only executable path and exact version assertion changed');
+          JS
+          node --check browser-stable-lab.mjs
+          BROWSER_DEPS="$RUNNER_TEMP/r4-browser-deps" PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node browser-stable-lab.mjs --disposable-lab
+      - name: Execute native MFA persistent replay and attempt guard
+        run: |
+          set -euo pipefail
+          cp labs/r4-mfa-hardening/{guarded-broker.mjs,totp-guard.sql,mfa-guard-lab.mjs} "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check guarded-broker.mjs
+          node --check mfa-guard-lab.mjs
+          sha256sum guarded-broker.mjs totp-guard.sql mfa-guard-lab.mjs
+          node mfa-guard-lab.mjs --disposable-lab
+      - name: Qualify guarded HTTPS entry point and native logout
+        run: |
+          set -euo pipefail
+          cp labs/r4-mfa-lifecycle/mfa-http-lab.mjs "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check mfa-http-lab.mjs
+          sha256sum mfa-http-lab.mjs
+          BROWSER_DEPS="$RUNNER_TEMP/r4-browser-deps" PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/r4-chromium" node mfa-http-lab.mjs --disposable-lab
+      - name: Qualify native credentials and replay key lifecycle
+        run: |
+          set -euo pipefail
+          cp labs/r4-mfa-lifecycle-b/{credential-maintenance.sql,credential-lifecycle-lab.mjs} "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check credential-lifecycle-lab.mjs
+          sha256sum credential-maintenance.sql credential-lifecycle-lab.mjs
+          node credential-lifecycle-lab.mjs --disposable-lab
+      - name: Qualify recovery after child interruption and PostgreSQL restart
+        run: |
+          set -euo pipefail
+          cp labs/r4-resilience-a/{maintenance-recovery.sql,resilience-child.mjs,resilience-lab.mjs} "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check resilience-child.mjs
+          node --check resilience-lab.mjs
+          sha256sum maintenance-recovery.sql resilience-child.mjs resilience-lab.mjs
+          node resilience-lab.mjs --disposable-lab
+      - name: Qualify automatic expiry worker and bounded retention
+        run: |
+          set -euo pipefail
+          cp labs/r4-resilience-b/{expiry-worker.sql,expiry-worker.mjs,worker-lab.mjs} "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check expiry-worker.mjs
+          node --check worker-lab.mjs
+          sha256sum expiry-worker.sql expiry-worker.mjs worker-lab.mjs
+          node worker-lab.mjs --disposable-lab
+      - name: Qualify persistent HTTPS login account and IP budgets
+        run: |
+          set -euo pipefail
+          cp labs/r4-rate-limit/{login-budget.sql,login-guard.mjs,rate-lab.mjs} "$RUNNER_TEMP/r4-tls-01/"
+          cd "$RUNNER_TEMP/r4-tls-01"
+          node --check login-guard.mjs
+          node --check rate-lab.mjs
+          sha256sum login-budget.sql login-guard.mjs rate-lab.mjs
+          node rate-lab.mjs --disposable-lab
+      - name: Audit exact locked npm dependencies (fail closed)
+        if: always()
+        run: |
+          set -euo pipefail
+          for kind in tls browser; do
+            if test "$kind" = tls; then dir="$RUNNER_TEMP/r4-tls-01"; else dir="$RUNNER_TEMP/r4-browser-deps"; fi
+            cd "$dir"
+            node --input-type=module - "$kind" <<'JS'
+            import fs from 'node:fs';
+            import assert from 'node:assert/strict';
+            import {createHash} from 'node:crypto';
+            const kind=process.argv[2], raw=fs.readFileSync('package-lock.json'), l=JSON.parse(raw);
+            const expected={tls:'51f45baa560d7ed7829e269011fbd936bb06b8177ed44bdacbedf5a894d4334f',browser:fs.readFileSync(process.env.RUNNER_TEMP+'/r4-browser-lock.sha256','utf8').split(' ')[0]};
+            assert.equal(createHash('sha256').update(raw).digest('hex'),expected[kind]);
+            for(const [name,v] of Object.entries(l.packages)){
+              if(!name) continue;
+              const u=new URL(v.resolved);
+              assert.equal(u.origin,'https://registry.npmjs.org');
+              assert(!u.username&&!u.password&&!u.search&&!u.hash);
+              assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+            }
+          JS
+            code=0
+            npm audit --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/audit-$kind.json" || code=$?
+            node --input-type=module - "$kind" "$code" "$RUNNER_TEMP/audit-$kind.json" <<'JS'
+            import fs from 'node:fs';
+            import assert from 'node:assert/strict';
+            const [kind,code,file]=process.argv.slice(2), a=JSON.parse(fs.readFileSync(file));
+            assert(!a.error,'AUDIT_SERVICE_ERROR');
+            assert(a.metadata?.vulnerabilities,'AUDIT_MISSING_METADATA');
+            console.log('AUDIT_RESULT '+JSON.stringify({kind,exit:Number(code),counts:a.metadata.vulnerabilities,findings:Object.entries(a.vulnerabilities??{}).map(([name,v])=>({name,severity:v.severity,range:v.range,via:v.via.map(x=>typeof x==='string'?x:{source:x.source,title:x.title,url:x.url,severity:x.severity,range:x.range}),fixAvailable:v.fixAvailable}))}));
+            assert.equal(Number(code),0,'AUDIT_EXIT_NONZERO');
+            assert.equal(a.metadata.vulnerabilities.total,0,'AUDIT_FINDINGS');
+          JS
+          done
+      - name: Semantic TypeScript check of all four original TS sources
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          test -d node_modules
+          # Keep the two certified runtime locks untouched. Types are isolated.
+          mkdir -m 700 "$RUNNER_TEMP/r4-types"
+          cd "$RUNNER_TEMP/r4-types"
+          printf '%s\n' '{"name":"panokit-hardening-types","version":"0.0.0","private":true,"dependencies":{"@types/node":"22.15.3"}}' > package.json
+          cp "$GITHUB_WORKSPACE/labs/r4-hardening-01/types.package-lock.json" package-lock.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.packages['node_modules/@types/node'].version,'22.15.3');
+          for(const [name,v] of Object.entries(l.packages)){
+            if(!name) continue;
+            const u=new URL(v.resolved);assert.equal(u.origin,'https://registry.npmjs.org');assert(!u.username&&!u.password&&!u.search&&!u.hash);assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/);
+          }
+          JS
+          sha256sum package-lock.json
+          echo '97d0866a8f33452d41992552e1a6d15fec542c92028fa8ec92859feaf0815da8  package-lock.json' | sha256sum -c -
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          echo '97d0866a8f33452d41992552e1a6d15fec542c92028fa8ec92859feaf0815da8  package-lock.json' | sha256sum -c -
+          npm audit --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/audit-types.json"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const a=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/audit-types.json'));
+          assert(!a.error);assert.equal(a.metadata.vulnerabilities.total,0);
+          console.log('AUDIT_RESULT '+JSON.stringify({kind:'types',counts:a.metadata.vulnerabilities}));
+          JS
+          cd "$RUNNER_TEMP/r4-tls-01"
+          ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --module commonjs --moduleResolution node --experimentalDecorators --emitDecoratorMetadata --esModuleInterop --typeRoots "$RUNNER_TEMP/r4-types/node_modules/@types" --types node sec01-sovereign-http-gate.ts sec01-sovereign-tls-gate.ts sec01-sovereign-sql-adapter.ts sec01-sovereign-sql-adapter-r3-original.ts
+          echo 'SEMANTIC_TYPECHECK PASS (4 source files; strict, noEmit, skipLibCheck third-party declarations only)'
+      - name: Verify immutable sources and free ports
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r4-tls-01"
+          sha256sum -c SHA256SUMS.txt
+          node --input-type=module <<'JS'
+          import {createServer} from 'node:net';
+          for(const port of [55444,55445,55447]){
+            const s=createServer();
+            await new Promise((r,j)=>{s.once('error',j);s.listen(port,'127.0.0.1',r)});
+            await new Promise((r,j)=>s.close(e=>e?j(e):r()));
+            console.log('PORT_FREE',port);
+          }
+          JS
+          echo 'Synthetic lab only. No production TLS, certification or deployment.' >> "$GITHUB_STEP_SUMMARY"
