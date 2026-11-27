@@ -85,7 +85,7 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
      if(result.status==='unavailable'&&result.reason==='contact_invalid'){send(res,422,{state:'contact_invalid',fields:result.fields,orderable:false});return;}
      if(result.status!=='lab_guest_admitted'||result.orderable!==false||!live(session)){session.stage='closed';unavailable(res);return;}
      session.receipt=result.receiptId;session.locale=body.locale;session.stage='contact';
-     send(res,200,{state:'contact',visualVersion,visualDigest,statementVersion,statement:statement[body.locale],orderable:false});return;
+     send(res,200,upstream?{state:'contact',orderable:false}:{state:'contact',visualVersion,visualDigest,statementVersion,statement:statement[body.locale],orderable:false});return;
     }
     if(!upstream&&exact(body,['action','accepted','visualVersion','visualDigest','statementVersion'])&&body.action==='visual'&&body.accepted===true&&session.stage==='contact'&&session.previewServed&&body.visualVersion===visualVersion&&body.visualDigest===visualDigest&&body.statementVersion===statementVersion){
      const input={leaseToken:session.lease,receiptId:session.receipt,visualVersion,visualDigest,statementVersion,locale:session.locale,accepted:true};
