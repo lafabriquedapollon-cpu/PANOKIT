@@ -38,15 +38,15 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
   await state(p,stage);await p.evaluate(()=>document.fonts.ready);
   const file='j07-react-'+key+'-'+stage+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});captures.push(file);
  }
- async function setup(lang,width){
+ async function setup(lang,width,variant='plat',suffix=''){
   const ctx=await browser.newContext({viewport:{width,height:844}});contexts.push(ctx);const p=await ctx.newPage();
   await p.goto(lab.origin+'/j07-lab');await p.locator('#studio-name').waitFor();
   // A real edit proves hydration; no static screenshot can satisfy this.
   if(lang==='ar')await p.locator('.studio-language button').nth(1).click();
-  const label=lang==='ar'?'محل تجريبي':'LAB DEMO FR';
+  const label=(lang==='ar'?'محل تجريبي':'LAB DEMO FR')+suffix;
   await p.locator('#studio-name').fill(label);
   await p.locator('.studio-template').nth(2).click();
-  await p.locator('.studio-views button').first().click();
+  await p.locator('.studio-views button').nth({plat:0,jour:1,nuit:2}[variant]).click();
   await p.locator('.studio-main-sign-scroll [data-studio-name=line]').filter({hasText:label}).waitFor();
   const svg=await p.locator('.studio-main-sign-scroll svg').evaluate(x=>x.outerHTML);
   await p.locator('#studio-price-review').click();await state(p,'selection');
@@ -119,5 +119,46 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
   check('archive/three-configured-only',await archiveCount()===archivesBefore+3);
   const c=await browser.newContext();contexts.push(c);const z=await c.newPage();await z.goto(lab.origin+'/j07-lab');const route=await z.evaluate(async()=>{const r=await fetch('/preview.svg');return r.status;});check('foreign-preview-denied',route===403);
   check('ten-captures',captures.length===10);
+  // D2: exercise the approved four states and the two downstream screens at every width/locale.
+  const matrix={checks:[],captures:[],measurements:[]};
+  const audit=(name,ok)=>{matrix.checks.push({name,pass:!!ok});assert.ok(ok,name);};
+  async function evidence(p,key,expected,screen){
+   await state(p,expected);await p.evaluate(()=>document.fonts.ready);
+   const m=await p.evaluate(()=>{
+    const root=document.querySelector('[data-testid=j07-lab]'),action=root.querySelector('[data-main-action]'),preview=root.querySelector('[data-testid=j07-preview]'),mobile=root.querySelector('[data-testid=j07-mobile-total]'),total=root.querySelector('[data-testid=j07-total]');
+    const rect=e=>e?{top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom,height:e.getBoundingClientRect().height,width:e.getBoundingClientRect().width}:null;
+    const luminance=c=>{const v=c.match(/[0-9.]+/g)?.slice(0,3).map(x=>Number(x)/255);return v?.map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4).reduce((sum,x,i)=>sum+x*[.2126,.7152,.0722][i],0)??0;};
+    const contrast=e=>{const style=getComputedStyle(e),a=luminance(style.color),b=luminance(style.backgroundColor);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);};
+    return {lang:root.lang,dir:root.dir,width:innerWidth,scroll:document.documentElement.scrollWidth,heading:root.querySelectorAll('h1').length,actionCount:root.querySelectorAll('[data-main-action]').length,action:rect(action),actionContrast:action?contrast(action):0,preview:rect(preview),mobile:mobile?.textContent,total:total?.textContent,fields:[...root.querySelectorAll('input,textarea')].map(e=>({height:rect(e).height,label:!!root.querySelector('label[for="'+e.id+'"]'),described:!e.getAttribute('aria-describedby')||!!document.getElementById(e.getAttribute('aria-describedby')),invalid:e.getAttribute('aria-invalid')==='true'})),amounts:root.querySelectorAll('[data-amount]').length,image:root.querySelector('[data-testid=j07-server-visual]')?.naturalWidth??0};
+   });
+   matrix.measurements.push({key,screen,...m});
+   audit(key+'/'+screen+'/reflow',m.scroll<=m.width+1);audit(key+'/'+screen+'/heading',m.heading===1);audit(key+'/'+screen+'/action',m.actionCount===1&&m.action.height>=44&&m.actionContrast>=4.5);
+   audit(key+'/'+screen+'/labels-targets',m.fields.every(f=>f.label&&f.described&&f.height>=44));
+   if(m.width<=760&&(screen==='pickup'||screen==='delivery'||screen==='error')){audit(key+'/'+screen+'/mobile-total',m.mobile===m.total);audit(key+'/'+screen+'/form-before-detail',m.action.bottom<=m.preview.top+1);}
+   if(screen==='stale')audit(key+'/stale/no-amount',m.amounts===0);
+   if(screen==='review'||screen==='acknowledged')audit(key+'/'+screen+'/visual-first',m.image>0&&m.preview.bottom<=m.action.top+1);
+   const file='j07-d2-'+key+'-'+screen+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});matrix.captures.push(file);
+  }
+  try{
+   for(const lang of ['fr','ar'])for(const width of [320,390,768,1440]){
+    const key=lang+'-'+width,variant=width===320||width===768?'jour':width===390?'nuit':'plat';
+    const {p,ctx}=await setup(lang,width,variant,' '+width);
+    try{
+     await select(p,'pickup');audit(key+'/pickup/fields',await p.locator('#j07-city,#j07-address').count()===0);await evidence(p,key,'coordinates','pickup');
+     await p.locator('button').filter({hasText:lang==='ar'?'العودة إلى عرض السعر':'Retour au devis'}).first().click();await state(p,'selection');
+     await select(p,'delivery');audit(key+'/delivery/fields',await p.locator('#j07-city[required],#j07-address[required]').count()===2);await evidence(p,key,'coordinates','delivery');
+     await mainAction(p).focus();await p.keyboard.press('Enter');await p.locator('#j07-name[aria-invalid=true]').waitFor();await p.waitForFunction(()=>document.activeElement?.id==='j07-name');audit(key+'/error/focus',await p.locator('#j07-name').getAttribute('aria-describedby')==='j07-name-error');await evidence(p,key,'coordinates','error');
+     const expired=await admin.query("with target as (select token_hash from j06_private.leases where guest_session_hash is not null order by issued_at desc limit 1), now_value as (select clock_timestamp()-interval '16 minutes' as t) update j06_private.leases l set issued_at=n.t,expires_at=n.t+interval '15 minutes' from target x,now_value n where l.token_hash=x.token_hash returning l.token_hash");
+     audit(key+'/expiry/fixture',expired.rowCount===1);await contact(p,'delivery');await mainAction(p).click();await state(p,'stale');await evidence(p,key,'stale','stale');
+     await mainAction(p).click();await state(p,'coordinates');await contact(p,'delivery');await mainAction(p).click();await state(p,'review');await visualReady(p);
+     const served=await p.evaluate(async()=>await (await fetch('/preview.svg')).text());
+     audit(key+'/review/configured',served.includes(String(width))&&(variant==='plat'||served.includes('data:image/svg+xml;base64,')));
+     const hash=createHash('sha256').update(served).digest('hex');await evidence(p,key,'review','review');
+     await mainAction(p).focus();await p.keyboard.press('Enter');await state(p,'acknowledged');await visualReady(p);audit(key+'/archive',await archived(hash));await evidence(p,key,'acknowledged','acknowledged');
+    }finally{await ctx.close();}
+   }
+   audit('matrix/48-captures',matrix.captures.length===48);audit('matrix/11-configured-archives',await archiveCount()===archivesBefore+11);
+  }finally{writeFileSync(join(out,'j07-d2-report.json'),JSON.stringify({sha:process.env.GITHUB_SHA,...matrix},null,2));console.log('J07_D2_RESULT '+JSON.stringify({passed:matrix.checks.filter(x=>x.pass).length,total:matrix.checks.length,captures:matrix.captures.length}));}
+
  }finally{for(const ctx of contexts)await ctx.close();await lab.close();writeFileSync(join(out,'j07-react-report.json'),JSON.stringify({checks,captures},null,2));console.log('J07_REACT_RESULT '+JSON.stringify({passed:checks.filter(x=>x.pass).length,total:checks.length,captures:captures.length}));}
 }
