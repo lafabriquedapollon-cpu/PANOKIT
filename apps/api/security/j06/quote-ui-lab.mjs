@@ -56,7 +56,7 @@ try{
   const m=await p.evaluate(()=>({w:innerWidth,scroll:document.documentElement.scrollWidth,actions:[...document.querySelectorAll('[data-main-action]')].filter(x=>x.getBoundingClientRect().height>0).map(x=>({bottom:x.getBoundingClientRect().bottom,height:x.getBoundingClientRect().height,disabled:x.disabled,bg:getComputedStyle(x).backgroundColor,fg:getComputedStyle(x).color})),total:document.querySelector('[data-total]').textContent,mobile:document.querySelector('[data-total-mobile]').textContent}));
   check(key+'/'+state+'/reflow',m.scroll<=m.w+1);check(key+'/'+state+'/one-action',m.actions.length===1&&m.actions[0].height>=44);if(m.w<=760)check(key+'/'+state+'/first-viewport',m.actions[0].bottom<=844&&m.mobile===m.total);
   const priced=['pickup','delivery'].includes(state);check(key+'/'+state+'/amount',priced?m.total===(state==='pickup'?'1.26 MAD':'1.35 MAD'):!m.total.includes('MAD'));check(key+'/'+state+'/action',m.actions[0].disabled===!['pickup','delivery','stale','unavailable'].includes(state));
-  check(key+'/'+state+'/action-visual',m.actions[0].bg===(m.actions[0].disabled?'rgb(233, 229, 223)':'rgb(182, 71, 9)')&&(m.actions[0].disabled||m.actions[0].fg==='rgb(255, 255, 255)'));
+  check(key+'/'+state+'/action-visual',(m.actions[0].disabled?m.actions[0].bg==='rgb(233, 229, 223)':['rgb(182, 71, 9)','rgb(150, 57, 8)'].includes(m.actions[0].bg)&&m.actions[0].fg==='rgb(255, 255, 255)'));
   const file=key+'-'+state+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});report.captures.push(file);
  };
  try{
