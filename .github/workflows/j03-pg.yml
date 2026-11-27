@@ -1,0 +1,58 @@
+name: J03 industrial PostgreSQL LAB (no deploy)
+on:
+  push:
+    branches: [feature/j03-pg-20261127]
+  pull_request:
+    branches: [feature/j03-industrial-20261127, main]
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: "10.22.0"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.13.1"
+      - name: Exact inactive LAB boundary
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor ad66a336a8a30666753e48627afe5b7b9dc6ff72 HEAD
+          git diff --exit-code ad66a336a8a30666753e48627afe5b7b9dc6ff72 HEAD -- apps/web apps/api/src/app.module.ts apps/api/src/main.ts pnpm-lock.yaml
+          test "$(git diff --name-only ad66a336a8a30666753e48627afe5b7b9dc6ff72 HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j03-pg.yml apps/api/security/j03/industrial-lab.sql apps/api/security/j03/industrial-lab.mjs apps/api/src/j03/industrial-pg-port.ts docs/j03-industrial-pg.md | LC_ALL=C sort)"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+      - name: Run actual PG17 admission laboratory
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          export J03_ADMISSION="$GITHUB_WORKSPACE/apps/api/dist/j03/industrial-admission.js"
+          export J03_PORT="$GITHUB_WORKSPACE/apps/api/dist/j03/industrial-pg-port.js"
+          mkdir -m 700 "$RUNNER_TEMP/j03-pg"
+          cp apps/api/security/j03/* "$RUNNER_TEMP/j03-pg/"
+          cp apps/api/security/sec01-compose/package-lock.json "$RUNNER_TEMP/j03-pg/"
+          cd "$RUNNER_TEMP/j03-pg"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const l=JSON.parse(fs.readFileSync('package-lock.json'));
+          assert.equal(l.packages['node_modules/embedded-postgres'].version,'17.12.0-beta.19');
+          assert.equal(l.packages['node_modules/pg'].version,'8.16.3');
+          for(const [name,v] of Object.entries(l.packages)) if(name){assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');assert.match(v.integrity,/^sha512-/);}
+          fs.writeFileSync('package.json',JSON.stringify({name:l.name,version:l.version,private:true,dependencies:l.packages[''].dependencies}));
+          JS
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          node industrial-lab.mjs --disposable-lab
