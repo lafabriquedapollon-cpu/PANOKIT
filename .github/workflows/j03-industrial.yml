@@ -22,11 +22,19 @@ jobs:
         with:
           node-version: "24.13.1"
       - name: Exact inactive LAB boundary
+        if: github.event_name != 'pull_request' || github.head_ref != 'feature/j05-r2-p0-20261127'
         run: |
           set -euo pipefail
           git merge-base --is-ancestor 6e346eefe166342dd1e87aebb8d47f5a2fcae24e HEAD
           git diff --exit-code 6e346eefe166342dd1e87aebb8d47f5a2fcae24e HEAD -- apps/web apps/api/src/app.module.ts apps/api/src/main.ts pnpm-lock.yaml
           test "$(git diff --name-only 6e346eefe166342dd1e87aebb8d47f5a2fcae24e HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j03-industrial.yml apps/api/src/j03-industrial.spec.ts apps/api/src/j03/industrial-admission.ts docs/j03-industrial-admission.md | LC_ALL=C sort)"
+      - name: Verify approved J05 integration scope (legacy regression continues)
+        if: github.event_name == 'pull_request' && github.head_ref == 'feature/j05-r2-p0-20261127'
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD
+          git diff --exit-code 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD -- apps/web apps/api packages pnpm-lock.yaml
+          test "$(git diff --name-only 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j02-bilingual.yml .github/workflows/j03-continuity.yml .github/workflows/j03-fue.yml .github/workflows/j03-industrial.yml .github/workflows/j03-pg.yml .github/workflows/j05-restored-fue.yml | LC_ALL=C sort)"
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
