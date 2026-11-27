@@ -1,0 +1,59 @@
+name: SEC01 Compose B-C-D (no deploy)
+on:
+  push:
+    branches: [security/sec01-compose-b, security/sec01-compose-c, security/sec01-compose-d]
+  pull_request:
+    branches: [security/sec01-compose-a, security/sec01-compose-b, security/sec01-compose-c]
+permissions:
+  contents: read
+jobs:
+  compose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: "10.22.0"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.13.1"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+      - name: Verify provenance and compose one disposable database
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(node --version)" = v22.16.0
+          export COMPOSE_PORTS="$GITHUB_WORKSPACE/apps/api/dist/j04/sec01-compose-ports.js"
+          test -f "$COMPOSE_PORTS"
+          export COMPOSE_RUNTIME="$GITHUB_WORKSPACE/apps/api/dist/j04/sec01-runtime.js"
+          test -f "$COMPOSE_RUNTIME"
+          cd apps/api/security/sec01-compose
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          const p=JSON.parse(fs.readFileSync('PROVENANCE.json'));
+          for(const [name,source] of Object.entries(p.sources)) assert.equal(createHash('sha256').update(fs.readFileSync(name)).digest('hex'),source.sha256);
+          const lock=JSON.parse(fs.readFileSync('package-lock.json'));
+          for(const [name,v] of Object.entries(lock.packages)) if(name){ assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org'); assert.match(v.integrity,/^sha512-[A-Za-z0-9+/]+={0,2}$/); }
+          console.log('SOURCE_AND_LOCK_PROVENANCE PASS');
+          JS
+          cp -a . "$RUNNER_TEMP/sec01-compose"
+          cd "$RUNNER_TEMP/sec01-compose"
+          npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          node compile-tls.cjs
+          node --check compose-a.mjs
+          node compose-a.mjs --disposable-lab
+          node --check compose-b.mjs
+          node compose-b.mjs --disposable-lab
