@@ -1,7 +1,7 @@
-name: J05 restored Studio FUE (no deploy)
+name: J05 R2 P0 Studio FUE (no deploy)
 on:
   push:
-    branches: [quality/j05-restored-fue-20261127]
+    branches: [feature/j05-r2-p0-20261127]
 permissions:
   contents: read
 jobs:
@@ -23,8 +23,8 @@ jobs:
         run: |
           set -euo pipefail
           git merge-base --is-ancestor 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD
-          test "$(git diff --name-only 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD)" = ".github/workflows/j05-restored-fue.yml"
-          git diff --exit-code 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD -- apps packages pnpm-lock.yaml
+          test "$(git diff --name-only 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j05-restored-fue.yml apps/web/src/app/studio/page.tsx | LC_ALL=C sort)"
+          git diff --exit-code 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD -- apps/web/public apps/api packages pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @panokit/web build
       - name: Pinned Playwright installation
@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           export J05_EVIDENCE="$RUNNER_TEMP/j05-evidence"
-          export PRODUCT_SHA="790f3ee74bc25c2cd0f9448f76b65d1e61c756ab"
+          export PRODUCT_SHA="$(git rev-parse HEAD)"
           mkdir -p "$J05_EVIDENCE"
           cat > "$RUNNER_TEMP/j05.mjs" <<'JS'
           import assert from 'node:assert/strict';
@@ -57,6 +57,8 @@ jobs:
           const shot=async(p,key,state)=>{await p.evaluate(()=>document.fonts.ready);const file=key+'-'+state+'.jpeg';await p.screenshot({path:join(out,file),type:'jpeg',quality:92,fullPage:true,animations:'disabled'});report.captures.push(file)};
           const logo=Buffer.from(await (async()=>{const p=await browser.newPage();const a=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=96;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,96,96);x.fillStyle='#184843';x.fillRect(10,10,76,76);x.fillStyle='#f46b0a';x.fillRect(25,25,46,46);return c.toDataURL('image/png').split(',')[1]});await p.close();return a})(),'base64');
           const wait=async(p,loc)=>{await loc.scrollIntoViewIfNeeded();await p.waitForTimeout(450)};
+          const bounds=async(sign)=>sign.locator('[data-studio-name]').evaluateAll(nodes=>nodes.map(n=>{const b=n.getBBox();return {x:b.x,y:b.y,w:b.width,h:b.height,kind:n.getAttribute('data-studio-name')}}));
+          const within=(b)=>b.length>0&&b.every(x=>x.x>=30&&x.y>=48&&x.x+x.w<=810&&x.y+x.h<=250);
           const ready=async(p,key)=>{
             const pending=new Map(),failures=[];
             const urlSafe=u=>{try{const a=new URL(u);return a.origin+a.pathname}catch{return 'unparseable'}};
@@ -94,8 +96,8 @@ jobs:
           await shot(p,key,'01-empty');
           const demo=ar?'متجر تجريبي':'ATELIER TEST';
           await name.fill(demo);await p.locator('#studio-activity').fill(ar?'نشاط تجريبي':'Activité test');await p.locator('#studio-slogan').fill(ar?'نص تجريبي':'Slogan test');
-          check(key+'/live-name',(await sign.textContent()).includes(demo));await wait(p,sign);await shot(p,key,'02-flat');
-          for(let i=0;i<4;i++){await tpl.nth(i).click();check(key+'/template-'+(i+1),(await tpl.nth(i).getAttribute('aria-pressed'))==='true');check(key+'/template-name-'+(i+1),(await sign.textContent()).includes(demo))}
+          check(key+'/live-name',(await sign.textContent()).includes(demo));await wait(p,sign);check(key+'/short-name-bounds',within(await bounds(sign)));await shot(p,key,'02-flat');
+          for(let i=0;i<4;i++){await tpl.nth(i).click();check(key+'/template-'+(i+1),(await tpl.nth(i).getAttribute('aria-pressed'))==='true');check(key+'/template-name-'+(i+1),(await sign.textContent()).includes(demo));check(key+'/template-bounds-'+(i+1),within(await bounds(sign)))}
           await tpl.nth(1).click();check(key+'/no-logo',await sign.locator('image').count()===0);
           await p.locator('#studio-logo').setInputFiles({name:'test-only.png',mimeType:'image/png',buffer:logo});await sign.locator('image').waitFor({state:'attached'});
           check(key+'/logo-preview',(await sign.locator('image').getAttribute('href')).startsWith('data:image/png;'));await wait(p,sign);await shot(p,key,'03-logo');
@@ -109,10 +111,15 @@ jobs:
           check(key+'/reject-svg',await p.locator('.studio-fields [role=alert]').isVisible());
           const long=ar?'اسم تجريبي طويل للغاية '.repeat(7).trim():'ATELIER TEST NOM COMMERCIAL TRES LONG '.repeat(5).trim();
           await name.fill(long);check(key+'/original-long-name',(await name.inputValue())===long);check(key+'/long-warning',await p.locator('.studio-preview [role=alert]').isVisible());
-          await wait(p,sign);await shot(p,key,'06-long');
+          await wait(p,sign);const longBounds=await bounds(sign);check(key+'/long-name-bounds',within(longBounds));check(key+'/long-name-explicit-adapt',longBounds.length===1&&longBounds[0].kind==='adapt');await shot(p,key,'06-long');
+          for(let i=0;i<4;i++){await tpl.nth(i).click();check(key+'/long-bounds-template-'+(i+1),within(await bounds(sign)))}
+          await name.fill('W'.repeat(27));for(let i=0;i<4;i++){await tpl.nth(i).click();check(key+'/wide-name-template-'+(i+1),within(await bounds(sign)))}
+          await name.fill(long);
           await wait(p,gate);check(key+'/final-gate',await gate.isDisabled());await shot(p,key,'07-blocked');
           await name.focus();await p.keyboard.press('Tab');obs(key+'/keyboard-next',await p.evaluate(()=>({id:document.activeElement?.id,tag:document.activeElement?.tagName})));
-          obs(key+'/back-href',await p.locator('.studio-back').getAttribute('href'));
+          const href=await p.locator('.studio-back').getAttribute('href');obs(key+'/back-href',href);check(key+'/back-href',href==='/catalogue/enseignes/lumineuses?lang='+lang);
+          const backResponse=await p.request.get(origin+href);check(key+'/back-http',backResponse.ok(),backResponse.status());
+          await p.locator('.studio-back').click();await p.waitForURL('**/catalogue/enseignes/lumineuses?lang='+lang);await p.locator('main').waitFor({state:'visible'});check(key+'/back-locale',(await p.locator('main').getAttribute('lang'))===lang);
           obs(key+'/final-layout',await metrics(p));
           }catch(e){report.errors.push({key,message:String(e)});await shot(p,key,'error').catch(()=>{})}
           finally{await c.close();await video.saveAs(join(out,key+'.webm'))}
