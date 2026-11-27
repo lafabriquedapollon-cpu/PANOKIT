@@ -117,10 +117,10 @@ jobs:
           await name.fill(long);
           await wait(p,gate);check(key+'/final-gate',await gate.isDisabled());await shot(p,key,'07-blocked');
           await name.focus();await p.keyboard.press('Tab');obs(key+'/keyboard-next',await p.evaluate(()=>({id:document.activeElement?.id,tag:document.activeElement?.tagName})));
+          obs(key+'/final-layout',await metrics(p));
           const href=await p.locator('.studio-back').getAttribute('href');obs(key+'/back-href',href);check(key+'/back-href',href==='/catalogue/enseignes/lumineuses?lang='+lang);
           const backResponse=await p.request.get(origin+href);check(key+'/back-http',backResponse.ok(),backResponse.status());
           await p.locator('.studio-back').click();await p.waitForURL('**/catalogue/enseignes/lumineuses?lang='+lang);await p.locator('main').waitFor({state:'visible'});check(key+'/back-locale',(await p.locator('main').getAttribute('lang'))===lang);
-          obs(key+'/final-layout',await metrics(p));
           }catch(e){report.errors.push({key,message:String(e)});await shot(p,key,'error').catch(()=>{})}
           finally{await c.close();await video.saveAs(join(out,key+'.webm'))}
           }
