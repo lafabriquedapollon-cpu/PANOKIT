@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import "./studio.css";
+import PriceReview from "../prix-livraison/price-review";
 import { splitPreservingText } from "./studio-text";
 
 type StudioLanguage = "fr" | "ar";
@@ -156,6 +157,9 @@ function Sign({data,template,view,palette,lang,thumb=false,defaultBoard=false}: 
 
 export default function StudioClient({initialLang="fr"}:{initialLang?:StudioLanguage}) {
   const [lang,setLang]=useState<StudioLanguage>(initialLang);
+  const [review,setReview]=useState(false);
+  const openedReview=useRef(false);
+  useEffect(()=>{if(!review&&openedReview.current){document.getElementById("studio-price-review")?.focus();}},[review]);
   const t=(key:string)=>tr(lang,key);
   const [name,setName]=useState(""), [activity,setActivity]=useState(""), [phone,setPhone]=useState(""), [slogan,setSlogan]=useState("");
   const [logo,setLogo]=useState<string|null>(null), [logoFileName,setLogoFileName]=useState(""), [logoError,setLogoError]=useState(""), [logoPending,setLogoPending]=useState(false);
@@ -207,6 +211,7 @@ export default function StudioClient({initialLang="fr"}:{initialLang?:StudioLang
       setLogo(url);setLogoFileName(file.name);setTemplate(2);setLogoPending(false);
     }catch{reject("Logo invalide ou dimensions excessives ; aucun nouveau logo appliqué.");}
   }
+  if(review)return <PriceReview lang={lang} onLanguage={changeLanguage} onBack={()=>setReview(false)} preview={<Sign data={data} template={template} view={view} palette={palette} lang={lang} defaultBoard={paletteId==="vert"&&!customColors}/>} name={name} needsAdaptation={warning} />;
   return <main className="studio-page" lang={lang} dir={lang==="ar"?"rtl":"ltr"}>
     <header className="studio-header"><Link href={lang==="ar"?"/ar":"/"} className="brand studio-brand">PANOKIT</Link><div className="nav studio-header-actions"><Link href={"/catalogue/enseignes/lumineuses?lang="+lang} className="back studio-back"><span aria-hidden="true">{lang==="ar"?"→":"←"}</span><span>{t("Catalogue")}</span></Link><div className="lang studio-language" role="group" aria-label="Langue / اللغة"><button type="button" aria-pressed={lang==="fr"} onClick={()=>changeLanguage("fr")}>FR</button><button type="button" aria-pressed={lang==="ar"} onClick={()=>changeLanguage("ar")}>العربية</button></div></div></header>
     <div className="studio-shell"><div className="studio-heading"><p className="eyebrow">{t("CATALOGUE / CAISSON LUMINEUX / STUDIO")}</p><h1>{t("Imaginez votre")} <span>{t("enseigne.")}</span></h1><p className="intro">{t("Composez votre caisson rectangulaire. Aperçu indicatif, formats à confirmer.")}</p></div>
@@ -230,7 +235,7 @@ export default function StudioClient({initialLang="fr"}:{initialLang?:StudioLang
         <details id="studio-info-panel"><summary className="rowline"><span>{t("Activité, téléphone et slogan")}</span><span className="plus" aria-hidden="true"/></summary><div className="statepanel"><label htmlFor="studio-activity">{t("Activité (facultatif)")}</label><input className="field" id="studio-activity" value={activity} onChange={e=>setActivity(e.target.value)} maxLength={80} dir="auto"/><label htmlFor="studio-phone">{t("Téléphone (facultatif)")}</label><input className="field" id="studio-phone" value={phone} onChange={e=>setPhone(e.target.value)} maxLength={40} dir="ltr"/><label htmlFor="studio-slogan">{t("Slogan (facultatif)")}</label><input className="field" id="studio-slogan" value={slogan} onChange={e=>setSlogan(e.target.value)} maxLength={100} dir="auto"/></div></details>
         <details id="studio-colors-panel"><summary className="rowline"><span>{t("Personnaliser les trois couleurs")}</span><span className="plus" aria-hidden="true"/></summary><div className="statepanel colorspec studio-custom-colors">{([["board","Fond de l'enseigne"],["lettering","Lettres"],["accent","Éclairage / accents illustratifs"]] as const).map(([key,label])=><label key={key} htmlFor={"studio-color-"+key}>{t(label)}<span><input id={"studio-color-"+key} type="color" value={colors[key]} onChange={e=>updateColor(key,e.target.value)}/><output>{colors[key].toUpperCase()}</output></span></label>)}{customColors&&<button type="button" className="studio-color-reset" onClick={()=>setCustomColors(null)}>{t("Revenir au modèle ")}{t(preset.label)}</button>}<p className="hint">{t("Personnalisation indicative : teintes, matériaux et éclairage réels à confirmer avec l’atelier avant fabrication.")}</p></div></details>
       </section>
-      <section className="card gate studio-gate"><strong>{t("Vérification industrielle requise")}</strong><p className="hint">{t("Formats, prix, devis, commande et export sont indisponibles tant que les données usine ne sont pas homologuées.")}</p><button type="button" disabled aria-label={t("Demander un devis — indisponible")} className="disabled">{t("Devis indisponible")}</button></section>
+      <section className="card gate studio-gate"><strong>{t("Vérification industrielle requise")}</strong><p className="hint">{t("Formats, prix, devis, commande et export sont indisponibles tant que les données usine ne sont pas homologuées.")}</p><button type="button" disabled aria-label={t("Demander un devis — indisponible")} className="disabled">{t("Devis indisponible")}</button><Link id="studio-price-review" className="studio-price-review-link" href={"/prix-livraison?lang="+lang} onClick={e=>{if(e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();if(logoPending)return;openedReview.current=true;setReview(true);}} aria-disabled={logoPending}>{lang==="ar"?"الاطلاع على شروط السعر والتوصيل — دون طلب":"Consulter prix et livraison — sans commande"}</Link></section>
     </div><p className="foot">{t("PANOKIT · Aperçu indicatif · Non BAT")}</p></div>
   </main>;
 }
