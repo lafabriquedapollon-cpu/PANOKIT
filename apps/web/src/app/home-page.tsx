@@ -1,0 +1,400 @@
+"use client";
+
+import {
+  ArrowDown,
+  ArrowRight,
+  ChevronDown,
+  FileText,
+  Menu,
+  X,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { FamilyIcon, type PanokitFamilyId } from "../components/family-icon";
+
+type FamilyId = PanokitFamilyId;
+
+/** Paths reserved for the original approved assets. No image binaries
+ * are included or implied by the availability of these paths. */
+const J02_MASTER = {
+  hero: "/visuals/accueil/ACC-HERO-01.webp",
+  categories: {
+    enseignes: "/visuals/accueil/ACC-CAT-01.webp",
+    drapeaux: "/visuals/accueil/ACC-CAT-02.webp",
+    signaletique: "/visuals/accueil/ACC-CAT-03.webp",
+    plv: "/visuals/accueil/ACC-CAT-04.webp",
+    impression: "/visuals/accueil/ACC-CAT-05.webp",
+    habillage: "/visuals/accueil/ACC-CAT-06.webp",
+  } satisfies Record<FamilyId, string>,
+} as const;
+
+type Family = {
+  id: FamilyId;
+  name: string;
+  options: string[];
+};
+
+const families: Family[] = [
+  {
+    id: "enseignes",
+    name: "Enseignes",
+    options: ["Lumineuses", "Non lumineuses"],
+  },
+  {
+    id: "drapeaux",
+    name: "Drapeaux",
+    options: ["Lumineux", "Non lumineux"],
+  },
+  {
+    id: "signaletique",
+    name: "Signalétique",
+    options: ["Plaques", "Totems", "Chantier"],
+  },
+  {
+    id: "plv",
+    name: "PLV",
+    options: ["Supports de communication"],
+  },
+  {
+    id: "impression",
+    name: "Impression",
+    options: ["Vinyle", "Bâche", "Tissu"],
+  },
+  {
+    id: "habillage",
+    name: "Habillage de façade",
+    options: ["Plein", "Perforé"],
+  },
+];
+
+/**
+ * Illustration vectorielle PROVISOIRE de structure.
+ * La maquette validée contient six illustrations architecturales dédiées.
+ * Nous les remplacerons par leurs assets de production, sans intégrer
+ * une capture globale non interactive dans le site.
+ */
+function CategoryScene({ family }: { family: FamilyId }) {
+  const common = {
+    fill: "none",
+    stroke: "#254b4c",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+  };
+
+  return (
+    <svg
+      className="scene-art"
+      viewBox="0 0 370 260"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <linearGradient id={`wall-${family}`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#f5f0e9" />
+          <stop offset="1" stopColor="#e2d7c9" />
+        </linearGradient>
+        <linearGradient id={`board-${family}`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#255a5e" />
+          <stop offset="1" stopColor="#123d42" />
+        </linearGradient>
+      </defs>
+      <rect width="370" height="260" fill={`url(#wall-${family})`} />
+      <path d="M0 219L370 209V260H0Z" fill="#dcd2c5" />
+      <path d="M0 221L370 211" stroke="#c5baa9" strokeWidth="1" />
+      {family === "enseignes" && (
+        <>
+          <rect x="18" y="45" width="334" height="182" fill="#c5beb1" />
+          <path d="M18 45L70 16H352V45Z" fill="#e7e3d9" />
+          <rect x="42" y="120" width="286" height="108" fill="#b5c5c0" />
+          <path d="M184 120V228M42 174H328" {...common} />
+          <rect x="24" y="49" width="322" height="77" rx="3" fill="#e89f54" />
+          <rect x="31" y="54" width="309" height="65" fill={`url(#board-${family})`} />
+          <text x="185" y="100" textAnchor="middle" fill="#fff8e8" fontSize="36" fontWeight="800" letterSpacing="2">
+            PANOKIT
+          </text>
+          <path d="M95 107Q175 120 268 108" fill="none" stroke="#f97316" strokeWidth="4" />
+          <path d="M13 217q18-60 43-26m-17 26q-17-35 4-47" stroke="#69875b" strokeWidth="7" fill="none" />
+        </>
+      )}
+      {family === "drapeaux" && (
+        <>
+          <path d="M0 18L174 0V260H0Z" fill="#d8cabe" />
+          <path d="M20 0V260M80 0V260M138 0V260" stroke="#c1b0a4" strokeWidth="2" />
+          <path d="M174 42L202 52V198L174 208Z" fill="#b1a99f" />
+          <rect x="193" y="90" width="48" height="8" rx="4" fill="#445a56" />
+          <rect x="193" y="159" width="48" height="8" rx="4" fill="#445a56" />
+          <path d="M237 47L347 76V192L237 166Z" fill="#df8a42" />
+          <path d="M242 53L341 79V184L242 162Z" fill={`url(#board-${family})`} />
+          <text x="288" y="130" textAnchor="middle" fill="#fdf9ec" fontSize="66" fontWeight="800">
+            P
+          </text>
+          <path d="M267 143Q289 132 309 141" stroke="#f97316" strokeWidth="5" fill="none" />
+        </>
+      )}
+      {family === "signaletique" && (
+        <>
+          <path d="M135 241L145 55L252 44L275 239Z" fill="#b0aba1" />
+          <path d="M142 48L257 41L261 226L140 233Z" fill={`url(#board-${family})`} />
+          <path d="M143 119L260 113V233L140 237Z" fill="#fbfaf6" />
+          <text x="201" y="94" textAnchor="middle" fill="#fff" fontSize="47" fontWeight="800">P</text>
+          <path d="M177 108q31-15 60-10" stroke="#fa7926" strokeWidth="5" fill="none" />
+          {["Accueil", "Bureaux", "Parking"].map((s, i) => (
+            <g key={s} transform={`translate(0,${i * 37})`}>
+              <text x="153" y="145" fontSize="14" fill="#162f31">{s}</text>
+              <path d="M227 138h18m-7-7 7 7-7 7" fill="none" stroke="#162f31" strokeWidth="2" />
+              <path d="M145 153L259 147" stroke="#dadbd4" />
+            </g>
+          ))}
+        </>
+      )}
+      {family === "plv" && (
+        <>
+          <path d="M115 40L207 29L270 226L177 238Z" fill="#545e58" />
+          <path d="M116 40L177 238L106 239L82 53Z" fill="#acb8ae" />
+          <path d="M97 50L202 37L257 211L155 222Z" fill={`url(#board-${family})`} />
+          <path d="M113 60L173 213" stroke="#2b4441" strokeWidth="3" />
+          <text x="180" y="154" fill="#fff" textAnchor="middle" fontSize="81" fontWeight="800">P</text>
+          <path d="M145 172Q180 154 218 166" stroke="#f97316" strokeWidth="7" fill="none" />
+          <path d="M65 239h232" stroke="#89887d" strokeWidth="5" />
+        </>
+      )}
+      {family === "impression" && (
+        <>
+          <ellipse cx="139" cy="161" rx="70" ry="65" fill="#e1d3c2" />
+          <path d="M118 99L300 75L354 155L173 188Z" fill="#3f6c70" />
+          <path d="M159 189L352 154L316 215L173 239Z" fill="#79a099" />
+          <path d="M159 189L352 154L344 171L165 210Z" fill="#f2f0e8" />
+          <ellipse cx="139" cy="160" rx="65" ry="63" fill="#f0e8d8" />
+          <ellipse cx="139" cy="160" rx="41" ry="41" fill="#cfac84" />
+          <ellipse cx="139" cy="160" rx="25" ry="25" fill="#9b704e" />
+          <ellipse cx="139" cy="160" rx="13" ry="13" fill="#745943" />
+        </>
+      )}
+      {family === "habillage" && (
+        <>
+          <path d="M36 70L228 25L344 65L345 240L38 243Z" fill="#b2ada1" />
+          <path d="M41 75L228 32L228 230L41 239Z" fill="#436569" />
+          <path d="M229 33L339 68V228L228 230Z" fill="#6a8980" />
+          {Array.from({ length: 5 }, (_, i) => (
+            <g key={i}>
+              <path d={`M${40 + i * 38} ${74 - i * 8}V238`} stroke="#253f41" strokeWidth="4" />
+              <path d={`M${228 + i * 22} ${33 + i * 7}V230`} stroke="#314f50" strokeWidth="3" />
+            </g>
+          ))}
+          {Array.from({ length: 5 }, (_, i) => (
+            <path key={i} d={`M39 ${105 + i * 26}L228 ${67 + i * 32}L341 ${100 + i * 28}`} stroke="#b4c8bf" strokeWidth="3" />
+          ))}
+          <path d="M228 32L339 68V178L228 144Z" fill="#9ab69d" />
+          {Array.from({ length: 7 }, (_, i) =>
+            Array.from({ length: 5 }, (_, j) => (
+              <circle key={`${i}-${j}`} cx={239 + i * 14} cy={54 + i * 4.2 + j * 17} r="2.4" fill="#3d6664" />
+            )),
+          )}
+          <rect x="39" y="209" width="304" height="30" fill="#294a4c" opacity=".85" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+const arFamilies: Record<FamilyId, {name: string; options: string[]}> = {
+  enseignes: {name: "اللافتات", options: ["مضيئة", "غير مضيئة"]},
+  drapeaux: {name: "اللافتات الجانبية", options: ["مضيئة", "غير مضيئة"]},
+  signaletique: {name: "الإرشاد والتوجيه", options: ["لوحات", "أعمدة إرشادية", "الأوراش"]},
+  plv: {name: "الإعلان في نقاط البيع", options: ["وسائل التواصل البصري"]},
+  impression: {name: "الطباعة", options: ["فينيل", "غطاء مطبوع", "قماش"]},
+  habillage: {name: "كسوة الواجهات", options: ["مصمتة", "مثقبة"]},
+};
+
+export default function HomePage({language = "fr"}: {language?: "fr" | "ar"}) {
+  const rtl = language === "ar";
+  const t = (fr: string, ar: string) => rtl ? ar : fr;
+  const nav = [
+    [t("Produits", "المنتجات"), "#familles"],
+    [t("Métiers", "المهن"), "#metiers"],
+    [t("Comment ça marche", "كيف يعمل"), "#comment-ca-marche"],
+    [t("Devis", "عرض السعر"), "#devis"],
+    [t("Contact", "اتصل بنا"), "#contact"],
+  ];
+  useEffect(() => {
+    const root = document.documentElement;
+    const oldLang = root.lang, oldDir = root.dir;
+    root.lang = language;
+    root.dir = rtl ? "rtl" : "ltr";
+    return () => { root.lang = oldLang; root.dir = oldDir; };
+  }, [language, rtl]);
+  const [expanded, setExpanded] = useState<FamilyId | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [artReady, setArtReady] = useState(false);
+  const [heroMasterReady, setHeroMasterReady] = useState(false);
+  const [categoryMastersReady, setCategoryMastersReady] = useState<Partial<Record<FamilyId, boolean>>>({});
+
+  useEffect(() => {
+    const artwork = new window.Image();
+    artwork.onload = () => setArtReady(true);
+    artwork.onerror = () => setArtReady(false);
+    artwork.src = "/images/panokit-cards.webp";
+    return () => {
+      artwork.onload = null;
+      artwork.onerror = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Keep the approved existing atlas until each original file decodes.
+    let active = true;
+    const candidates: Array<{ key: FamilyId | "hero"; src: string }> = [
+      { key: "hero", src: J02_MASTER.hero },
+      ...Object.entries(J02_MASTER.categories).map(([key, src]) => ({ key: key as FamilyId, src })),
+    ];
+    const preloads = candidates.map(({ key, src }) => {
+      const artwork = new window.Image();
+      artwork.onload = () => {
+        if (!active || artwork.naturalWidth === 0 || artwork.naturalHeight === 0) return;
+        if (key === "hero") setHeroMasterReady(true);
+        else setCategoryMastersReady((ready) => ({ ...ready, [key]: true }));
+      };
+      artwork.onerror = () => { /* Missing masters are an expected safe fallback. */ };
+      artwork.src = src;
+      return artwork;
+    });
+    return () => {
+      active = false;
+      for (const artwork of preloads) {
+        artwork.onload = null;
+        artwork.onerror = null;
+      }
+    };
+  }, []);
+
+  return (
+    <main className="panokit-home" lang={language} dir={rtl ? "rtl" : "ltr"}>
+      <header className="site-header">
+        <div className="site-header-inner">
+          <a href="#" className="brand" aria-label={t("PANOKIT — accueil", "PANOKIT — الصفحة الرئيسية")}>
+            <span className="brand-word" dir="ltr">PANOKIT<span className="brand-swoosh" /></span>
+            <span className="brand-separator" aria-hidden="true" />
+            <span className="brand-descriptor">{t("SIGNALÉTIQUE &", "اللافتات و")}<br />{t("COMMUNICATION VISUELLE", "التواصل البصري")}</span>
+          </a>
+
+          <nav className="desktop-nav" aria-label={t("Navigation principale", "التنقل الرئيسي")}>
+            {nav.map(([label, href], index) => <a key={href} href={href}>{label}{index < 2 && <ChevronDown size={15} aria-hidden="true" />}</a>)}
+          </nav>
+          <a href="#devis" className="primary-action desktop-action">
+            <FileText size={19} aria-hidden="true" />
+            {t("Demander un devis", "اطلب عرض سعر")}
+          </a>
+          <a className="home-language-switch" href={rtl ? "/" : "/ar"} lang={rtl ? "fr" : "ar"} hrefLang={rtl ? "fr" : "ar"} aria-label={rtl ? "Français" : "العربية"}>{rtl ? "FR" : "العربية"}</a>
+          <button
+            className="mobile-menu-toggle"
+            type="button"
+            aria-label={mobileMenuOpen ? t("Fermer le menu", "إغلاق القائمة") : t("Ouvrir le menu", "فتح القائمة")}
+            aria-expanded={mobileMenuOpen}
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X size={26} /> : <Menu size={26} />}
+          </button>
+        </div>
+        {mobileMenuOpen && (
+          <nav className="mobile-nav" aria-label={t("Navigation mobile", "قائمة الهاتف")}>
+            {nav.map(([label, href]) => (
+              <a key={href} href={href} onClick={() => setMobileMenuOpen(false)}>{label}</a>
+            ))}
+          </nav>
+        )}
+      </header>
+
+      <section className={`home-hero ${heroMasterReady ? "has-master" : ""}`} aria-labelledby="home-title">
+        {heroMasterReady && (
+          <div
+            className="home-hero-master"
+            data-asset-id="ACC-HERO-01"
+            role="img"
+            aria-label={t("Illustration architecturale de l’accueil PANOKIT", "رسم معماري للصفحة الرئيسية") }
+          />
+        )}
+        <p className="eyebrow"><span className="eyebrow-line" /> {t("SIGNALÉTIQUE & COMMUNICATION VISUELLE", "اللافتات والتواصل البصري")}</p>
+        <h1 id="home-title">{rtl ? <>لم يكن الحصول على لافتتك<br /> <strong>بهذه السهولة من قبل.</strong></> : <>Avoir son enseigne n&apos;a<span className="mobile-headline-break"><br /></span> jamais<br className="headline-break" /> <strong>été aussi simple.</strong></>}</h1>
+        <div className="headline-stroke" aria-hidden="true" />
+        <a className="mobile-hero-action" href="#familles">
+          {t("Voir les produits", "اكتشف المنتجات")} <ArrowDown size={17} aria-hidden="true" />
+        </a>
+      </section>
+
+      <section className="category-section" id="familles" aria-label={t("Nos familles de produits", "فئات المنتجات")}>
+        {rtl && <p className="home-catalogue-language">الكتالوج الحالي متاح بالفرنسية.</p>}
+        <div className="category-grid">
+          {families.map((family) => {
+            const isExpanded = expanded === family.id;
+            return (
+              <article
+                key={family.id}
+                className={`category-card ${family.id === "enseignes" ? "reference-emphasis" : ""} ${isExpanded ? "selected" : ""}`}
+                onMouseEnter={() => {
+                  if (window.matchMedia("(hover: hover)").matches) setExpanded(family.id);
+                }}
+                onMouseLeave={() => {
+                  if (window.matchMedia("(hover: hover)").matches) {
+                    setExpanded((open) => (open === family.id ? null : open));
+                  }
+                }}
+              >
+                <div
+                  className={`card-artwork ${categoryMastersReady[family.id] ? "has-master" : artReady ? "has-photo" : ""}`}
+                  data-family={family.id}
+                  data-asset-id={categoryMastersReady[family.id] ? `ACC-CAT-${String(families.indexOf(family) + 1).padStart(2, "0")}` : undefined}
+                  style={categoryMastersReady[family.id] ? { backgroundImage: `url("${J02_MASTER.categories[family.id]}")` } : undefined}
+                  role="img"
+                  aria-label={rtl ? `رسم توضيحي: ${arFamilies[family.id].name}` : `Illustration de ${family.name.toLowerCase()} issue de la maquette PANOKIT`}
+                >
+                  {!artReady && !categoryMastersReady[family.id] && <CategoryScene family={family.id} />}
+                </div>
+                <button
+                  type="button"
+                  className="category-title-row"
+                  aria-expanded={isExpanded}
+                  aria-controls={`family-${family.id}-options`}
+                  onClick={() => setExpanded(isExpanded ? null : family.id)}
+                >
+                  <FamilyIcon family={family.id} />
+                  <span>{rtl ? arFamilies[family.id].name : family.name}</span>
+                  <span className="category-chevron" aria-hidden="true"><ChevronDown size={21} /></span>
+                </button>
+                <div className="family-options" id={`family-${family.id}-options`} hidden={!isExpanded}>
+                  {family.options.map((option, index) => (
+                    <a
+                      key={option}
+                      href={`/catalogue/${family.id}?categorie=${encodeURIComponent(option.toLowerCase().replaceAll(" ", "-"))}`}
+                      className="family-option"
+                    >
+                      {rtl ? arFamilies[family.id].options[index] : option} <ArrowRight size={14} aria-hidden="true" />
+                    </a>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="reference-wave" aria-hidden="true">
+        <svg viewBox="0 0 1440 76" preserveAspectRatio="none">
+          <path d="M0 25C350 83 1040 -4 1440 27" fill="none" stroke="#f46b0a" strokeWidth="4" />
+        </svg>
+      </div>
+      <section className="home-secondary" id="comment-ca-marche">
+        <div>
+          <span className="section-kicker">{t("CONCEPTION SIMPLIFIÉE", "تصميم مبسّط")}</span>
+          <h2>{t("Choisissez. Personnalisez. Commandez.", "اختر. خصّص. اطلب.")}</h2>
+          <p>{t("Des formats standardisés, votre identité graphique, un aperçu avant fabrication et un kit pensé pour votre activité.", "مقاسات موحّدة، هويتك البصرية، معاينة قبل التصنيع وطقم مصمّم لنشاطك.")}</p>
+        </div>
+        <a href="#familles" className="secondary-link">{t("Découvrir les produits", "اكتشف المنتجات")} <ArrowRight size={18} aria-hidden="true" /></a>
+      </section>
+      <section className="home-anchor-links" aria-label={t("Informations complémentaires", "معلومات إضافية")}>
+        <div id="metiers"><h2>{t("Pour votre métier", "لنشاطك المهني")}</h2><p>{t("Le choix de votre activité intervient après celui de votre modèle d’enseigne.", "يتم اختيار نشاطك بعد اختيار نموذج اللافتة.")}</p></div>
+        <div id="devis"><h2>{t("Votre devis", "عرض السعر")}</h2><p>{t("Le parcours de devis sera relié au PANOKIT Studio lors du prochain lot.", "سيتم ربط مسار عرض السعر بأداة PANOKIT Studio في المرحلة المقبلة.")}</p></div>
+        <div id="contact"><h2>{t("Nous contacter", "اتصل بنا")}</h2><p>{t("Les coordonnées de contact seront intégrées une fois validées.", "ستُضاف معلومات الاتصال بعد اعتمادها.")}</p></div>
+      </section>
+      <footer className="site-footer"><span>PANOKIT</span><span>{t("Signalétique & communication visuelle", "اللافتات والتواصل البصري")}</span></footer>
+    </main>
+  );
+}
