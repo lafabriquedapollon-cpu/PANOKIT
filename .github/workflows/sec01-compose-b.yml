@@ -57,3 +57,7 @@ jobs:
           node compose-a.mjs --disposable-lab
           node --check compose-b.mjs
           node compose-b.mjs --disposable-lab
+          export COMPOSE_RESILIENCE="$GITHUB_WORKSPACE/apps/api/dist/j04/sec01-resilience.js"
+          test -f "$COMPOSE_RESILIENCE"
+          node --check compose-c.mjs
+          node compose-c.mjs --disposable-lab
