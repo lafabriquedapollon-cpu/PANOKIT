@@ -83,7 +83,7 @@ try{
  for(const {p,key} of contexts){await p.locator('[data-action=delivery]').click();await capture(p,key,'unavailable');}
  check('all-64-captures',report.captures.length===64);
  const archiveProof=async(c)=>(await c.query("select receipt_id::text,visual_digest,encode(sha256(svg_bytes),'hex') as actual,octet_length(svg_bytes) as size from j06_private.guest_visual_archive order by receipt_id")).rows;
- const original=await archiveProof(admin);assert.equal(original.length,3);assert(original.every(x=>x.visual_digest===x.actual&&x.size>0));
+ const original=await archiveProof(admin);assert.equal(original.length,11);assert(original.every(x=>x.visual_digest===x.actual&&x.size>0));
  for(const c of [editor,approver,revoker,runtime,outsider]){
   await denied(()=>c.query('select * from j06_private.guest_visual_archive'));
   await denied(()=>c.query('delete from j06_private.guest_visual_archive'));
