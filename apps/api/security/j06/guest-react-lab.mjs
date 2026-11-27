@@ -9,6 +9,7 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
  const {renderConfiguredLabVisual}=require(process.env.J07_RENDERER);
  const masters={jour:'data:image/svg+xml;base64,'+Buffer.from(preview).toString('base64'),nuit:'data:image/svg+xml;base64,'+readFileSync(process.env.J07_MASTER_NIGHT).toString('base64')};
  const renderVisual=config=>renderConfiguredLabVisual(config,masters);
+ const sharp=createRequire(process.env.J07_RENDERER)('sharp');
  const lab=await startGuestUiLab({domain,connect,fixture,preview,reactLabOrigin:process.env.J07_REACT_ORIGIN,renderVisual});
  const contexts=[],checks=[],captures=[];
  const check=(name,ok)=>{checks.push({name,pass:!!ok});assert.ok(ok,name);};
@@ -18,6 +19,9 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
  const count=async()=>Number((await admin.query('select count(*)::int as n from j06_private.guest_admissions')).rows[0].n);
  const consentCount=async()=>Number((await admin.query('select count(*)::int as n from j06_private.guest_visual_consents')).rows[0].n);
  const before=await count(),consentsBefore=await consentCount();
+ const archiveCount=async()=>Number((await admin.query('select count(*)::int as n from j06_private.guest_visual_archive')).rows[0].n);
+ const archivesBefore=await archiveCount();
+ const archived=async(hash)=>{const r=await admin.query('select svg_bytes,visual_digest from j06_private.guest_visual_archive where visual_digest=$1',[hash]);return r.rows.length===1&&createHash('sha256').update(r.rows[0].svg_bytes).digest('hex')===hash;};
  const manifestBytes=async(p,svg)=>{
   const result=await p.evaluate(async original=>{
    const r=await fetch('/preview.svg'),server=await r.text();
@@ -65,13 +69,21 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
  }
  try{
   const base={data:{name:'LAB DEMO',activity:'',phone:'',slogan:'',logo:null},template:1,view:'plat',palette:{board:'#204947',night:'#16413e',lettering:'#fff9ef',accent:'#f49b48'},lang:'fr',defaultBoard:true};
-  check('renderer/flat',renderVisual(base)?.includes('LAB DEMO'));
-  check('renderer/day-embedded',renderVisual({...base,view:'jour'})?.includes(masters.jour));
-  check('renderer/night-embedded',renderVisual({...base,view:'nuit'})?.includes(masters.nuit));
-  check('renderer/deny-logo',renderVisual({...base,data:{...base.data,logo:'data:image/png;base64,AA=='}})===null);
-  check('renderer/deny-href',renderVisual({...base,href:'https://example.invalid'})===null);
-  check('renderer/escaped-text',!renderVisual({...base,data:{...base.data,name:'<script>test</script>'}})?.includes('<script>'));
-  check('renderer/deny-adaptation',renderVisual({...base,data:{...base.data,name:'a'.repeat(50)}})===null);
+  check('renderer/flat',(await renderVisual(base))?.includes('LAB DEMO'));
+  check('renderer/day-embedded',(await renderVisual({...base,view:'jour'}))?.includes(masters.jour));
+  check('renderer/night-embedded',(await renderVisual({...base,view:'nuit'}))?.includes(masters.nuit));
+  check('renderer/deny-logo',await renderVisual({...base,data:{...base.data,logo:'data:image/png;base64,AA=='}})===null);
+  check('renderer/deny-href',await renderVisual({...base,href:'https://example.invalid'})===null);
+  check('renderer/escaped-text',!(await renderVisual({...base,data:{...base.data,name:'<script>test</script>'}}))?.includes('<script>'));
+  check('renderer/deny-adaptation',await renderVisual({...base,data:{...base.data,name:'a'.repeat(50)}})===null);
+  const png=await sharp({create:{width:64,height:32,channels:3,background:'#e77924'}}).png().toBuffer();
+  const jpeg=await sharp(png).jpeg().toBuffer();
+  const pngLogo='data:image/png;base64,'+png.toString('base64'),jpegLogo='data:image/jpeg;base64,'+jpeg.toString('base64');
+  for(const [format,logo] of [['png',pngLogo],['jpeg',jpegLogo]]){const svg=await renderVisual({...base,template:2,data:{...base.data,logo}});check('renderer/normalized-'+format,!!svg&&svg.includes('data:image/png;base64,')&&!svg.includes('data:image/jpeg;base64,'));}
+  check('renderer/deny-external-logo',await renderVisual({...base,template:2,data:{...base.data,logo:'https://example.invalid/logo.png'}})===null);
+  check('renderer/deny-svg-logo',await renderVisual({...base,template:2,data:{...base.data,logo:'data:image/svg+xml;base64,PHN2Zy8+'}})===null);
+  check('renderer/deny-mismatched-mime',await renderVisual({...base,template:2,data:{...base.data,logo:'data:image/jpeg;base64,'+png.toString('base64')}})===null);
+  check('renderer/deny-truncated-png',await renderVisual({...base,template:2,data:{...base.data,logo:'data:image/png;base64,'+png.subarray(0,20).toString('base64')}})===null);
   const fr=await setup('fr',1440),p=fr.p;
   await select(p,'pickup');check('fr/pickup-fields',await p.locator('#j07-city,#j07-address').count()===0);check('fr/server-total',(await amount(p)).replace(/\s/g,'')==='1,26MAD');
   await layout(p,'fr-1440');await capture(p,'fr-1440','coordinates');
@@ -87,7 +99,7 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
   await contact(p,'pickup');await mainAction(p).click();await state(p,'review');
   check('fr/contact-durable',await count()===before+1);await visualReady(p);const frProof=await manifestBytes(p,fr.svg);check('fr/server-render-equals-studio',frProof.same);
   check('fr/no-pii-in-url-storage',await p.evaluate(()=>!location.href.includes('Client')&&!location.href.includes('0600000000')&&localStorage.length===0&&sessionStorage.length===0));
-  await capture(p,'fr-1440','review');await mainAction(p).click();await state(p,'acknowledged');check('fr/consent-durable',await consentCount()===consentsBefore+1);check('fr/consent-exact-bytes',await lastHash()===frProof.hash);await capture(p,'fr-1440','acknowledged');
+  await capture(p,'fr-1440','review');await mainAction(p).click();await state(p,'acknowledged');check('fr/consent-durable',await consentCount()===consentsBefore+1);check('fr/consent-exact-bytes',await lastHash()===frProof.hash);check('fr/archive-exact-bytes',await archived(frProof.hash));await capture(p,'fr-1440','acknowledged');
   const ar=await setup('ar',390),q=ar.p;
   await select(q,'delivery');check('ar/delivery-fields',await q.locator('#j07-city[required],#j07-address[required]').count()===2);check('ar/server-total',(await amount(q)).replace(/\s/g,'')==='1,35MAD');
   await layout(q,'ar-390');await capture(q,'ar-390','coordinates');
@@ -96,8 +108,16 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
   await capture(q,'ar-390','review');
   const forged=await q.evaluate(async()=>{const r=await fetch('/action',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'visual',accepted:true,visualVersion:'lab-config-v1',visualDigest:'0'.repeat(64),statementVersion:'lab-visual-v1'})});return r.status;});
   check('ar/forged-digest-denied',forged===400);check('no-forged-consent',await consentCount()===consentsBefore+1);
-  await mainAction(q).click();await state(q,'acknowledged');check('ar/consent-durable',await consentCount()===consentsBefore+2);check('ar/consent-exact-bytes',await lastHash()===arProof.hash);await capture(q,'ar-390','acknowledged');
+  await mainAction(q).click();await state(q,'acknowledged');check('ar/consent-durable',await consentCount()===consentsBefore+2);check('ar/consent-exact-bytes',await lastHash()===arProof.hash);check('ar/archive-exact-bytes',await archived(arProof.hash));await capture(q,'ar-390','acknowledged');
+  const logoCtx=await browser.newContext({viewport:{width:390,height:844}});contexts.push(logoCtx);const lp=await logoCtx.newPage();await lp.goto(lab.origin+'/j07-lab');
+  await lp.locator('#studio-name').fill('LAB LOGO');await lp.locator('#studio-logo-panel summary').click();await lp.locator('#studio-logo').setInputFiles({name:'fixture.jpg',mimeType:'image/jpeg',buffer:jpeg});
+  await lp.locator('.studio-main-sign-scroll [data-studio-logo=true]').waitFor({state:'attached'});
+  await lp.locator('.studio-views button').first().click();await lp.locator('#studio-price-review').click();await state(lp,'selection');await select(lp,'pickup');await contact(lp,'pickup');await mainAction(lp).click();await state(lp,'review');await visualReady(lp);
+  const logoBytes=await lp.evaluate(async()=>await (await fetch('/preview.svg')).text()),logoHash=createHash('sha256').update(logoBytes).digest('hex');
+  check('logo/server-normalized-image',logoBytes.includes('data:image/png;base64,')&&!logoBytes.includes('data:image/jpeg;base64,'));
+  await capture(lp,'logo-390','review');await mainAction(lp).click();await state(lp,'acknowledged');check('logo/archive-exact-bytes',await archived(logoHash));await capture(lp,'logo-390','acknowledged');
+  check('archive/three-configured-only',await archiveCount()===archivesBefore+3);
   const c=await browser.newContext();contexts.push(c);const z=await c.newPage();await z.goto(lab.origin+'/j07-lab');const route=await z.evaluate(async()=>{const r=await fetch('/preview.svg');return r.status;});check('foreign-preview-denied',route===403);
-  check('eight-captures',captures.length===8);
+  check('ten-captures',captures.length===10);
  }finally{for(const ctx of contexts)await ctx.close();await lab.close();writeFileSync(join(out,'j07-react-report.json'),JSON.stringify({checks,captures},null,2));console.log('J07_REACT_RESULT '+JSON.stringify({passed:checks.filter(x=>x.pass).length,total:checks.length,captures:captures.length}));}
 }
