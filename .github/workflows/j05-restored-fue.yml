@@ -57,6 +57,26 @@ jobs:
           const shot=async(p,key,state)=>{await p.evaluate(()=>document.fonts.ready);const file=key+'-'+state+'.jpeg';await p.screenshot({path:join(out,file),type:'jpeg',quality:92,fullPage:true,animations:'disabled'});report.captures.push(file)};
           const logo=Buffer.from(await (async()=>{const p=await browser.newPage();const a=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=96;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,96,96);x.fillStyle='#184843';x.fillRect(10,10,76,76);x.fillStyle='#f46b0a';x.fillRect(25,25,46,46);return c.toDataURL('image/png').split(',')[1]});await p.close();return a})(),'base64');
           const wait=async(p,loc)=>{await loc.scrollIntoViewIfNeeded();await p.waitForTimeout(450)};
+          const ready=async(p,key)=>{
+            const pending=new Map(),failures=[];
+            const urlSafe=u=>{try{const a=new URL(u);return a.origin+a.pathname}catch{return 'unparseable'}};
+            p.on('request',q=>pending.set(q,urlSafe(q.url())));
+            p.on('requestfinished',q=>pending.delete(q));
+            p.on('requestfailed',q=>{pending.delete(q);failures.push({url:urlSafe(q.url()),error:q.failure()?.errorText})});
+            p.on('response',r=>{if(r.status()>=400)failures.push({url:urlSafe(r.url()),status:r.status()})});
+            try{
+              const response=await p.goto(origin+'/studio',{waitUntil:'domcontentloaded',timeout:30000});
+              assert(response?.ok(),'Studio HTTP response must be successful');
+              await p.locator('main.studio-page').waitFor({state:'visible',timeout:15000});
+              await p.locator('#studio-name').waitFor({state:'visible',timeout:15000});
+              await p.locator('.studio-main-sign-scroll svg').waitFor({state:'visible',timeout:15000});
+              await p.waitForFunction(()=>document.readyState!=='loading'&&document.querySelectorAll('.studio-template').length===4,{},{timeout:15000});
+              obs(key+'/navigation',{status:response.status(),pending:[...pending.values()],failures});
+            }catch(e){
+              obs(key+'/navigation-error',{url:urlSafe(p.url()),pending:[...pending.values()],failures});
+              throw e;
+            }
+          };
           try{
           for(const lang of ['fr','ar'])for(const width of [390,1440]){
           const key=lang+'-'+width,height=width===390?844:1000,ar=lang==='ar';
@@ -64,9 +84,9 @@ jobs:
           const p=await c.newPage();p.on('pageerror',e=>report.errors.push({key,message:e.message}));
           const video=p.video(),main=p.locator('main.studio-page'),sign=p.locator('.studio-main-sign-scroll svg'),gate=p.locator('.studio-gate button'),name=p.locator('#studio-name'),tpl=p.locator('.studio-template'),views=p.locator('.studio-views button');
           try{
-          await p.goto(origin+'/studio',{waitUntil:'networkidle'});
+          await ready(p,key);
           if(ar)await p.getByRole('button',{name:'العربية',exact:true}).click();
-          await p.waitForTimeout(350);
+          await p.waitForFunction(expected=>document.querySelector('main.studio-page')?.lang===expected,lang,{timeout:10000});
           check(key+'/locale',(await main.getAttribute('dir'))===(ar?'rtl':'ltr')&&(await main.getAttribute('lang'))===lang);
           check(key+'/initial-gate',await gate.isDisabled());
           check(key+'/four-templates',await tpl.count()===4);
@@ -99,7 +119,7 @@ jobs:
           }
           for(const lang of ['fr','ar'])for(const width of [195,320,375,414,768]){
           const p=await browser.newPage({viewport:{width,height:844}});const key=lang+'-'+width;
-          try{await p.goto(origin+'/studio',{waitUntil:'networkidle'});if(lang==='ar')await p.getByRole('button',{name:'العربية',exact:true}).click();await p.locator('#studio-name').fill(lang==='ar'?'اختبار':'TEST');const m=await metrics(p);obs(key+'/reflow',m);check(key+'/no-page-overflow',m.scrollWidth<=width+1);check(key+'/gate',await p.locator('.studio-gate button').isDisabled());if(width===195||width===320)await shot(p,key,'reflow')}catch(e){report.errors.push({key,message:String(e)})}finally{await p.close()}
+          try{await ready(p,key);if(lang==='ar')await p.getByRole('button',{name:'العربية',exact:true}).click();await p.locator('#studio-name').fill(lang==='ar'?'اختبار':'TEST');const m=await metrics(p);obs(key+'/reflow',m);check(key+'/no-page-overflow',m.scrollWidth<=width+1);check(key+'/gate',await p.locator('.studio-gate button').isDisabled());if(width===195||width===320)await shot(p,key,'reflow')}catch(e){report.errors.push({key,message:String(e)})}finally{await p.close()}
           }
           }finally{await browser.close();writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({checks:report.checks.length,passed:report.checks.filter(x=>x.ok).length,failed:report.checks.filter(x=>!x.ok),errors:report.errors,captures:report.captures.length}));}
           assert.equal(report.errors.length,0);assert.equal(report.checks.filter(x=>!x.ok).length,0);
@@ -118,6 +138,7 @@ jobs:
           node "$RUNNER_TEMP/j05.mjs"
           result=$?
           set -e
+          cp "$RUNNER_TEMP/j05-next.log" "$J05_EVIDENCE/server.log"
           for lang in fr ar; do
             for width in 390 1440; do
               key="$lang-$width"
@@ -128,7 +149,7 @@ jobs:
             done
           done
           rm -rf "$J05_EVIDENCE/raw"
-          (cd "$J05_EVIDENCE"; sha256sum *.jpeg *.mp4 *.json > SHA256SUMS)
+          (cd "$J05_EVIDENCE"; sha256sum *.jpeg *.mp4 *.json server.log > SHA256SUMS)
           test "$result" = 0
           test "$(find "$J05_EVIDENCE" -maxdepth 1 -name '*.jpeg' | wc -l)" = 32
       - name: Upload Studio evidence
