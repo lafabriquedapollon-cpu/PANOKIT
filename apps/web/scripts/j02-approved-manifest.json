@@ -1,0 +1,48 @@
+{
+  "status": "PENDING_ORIGINALS",
+  "provenance": "Artwork approved by user; exact independent binaries not yet accessible to this integration",
+  "assets": [
+    {
+      "id": "ACC-HERO-01",
+      "filename": "ACC-HERO-01.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    },
+    {
+      "id": "ACC-CAT-01",
+      "filename": "ACC-CAT-01.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    },
+    {
+      "id": "ACC-CAT-02",
+      "filename": "ACC-CAT-02.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    },
+    {
+      "id": "ACC-CAT-03",
+      "filename": "ACC-CAT-03.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    },
+    {
+      "id": "ACC-CAT-04",
+      "filename": "ACC-CAT-04.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    },
+    {
+      "id": "ACC-CAT-05",
+      "filename": "ACC-CAT-05.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    },
+    {
+      "id": "ACC-CAT-06",
+      "filename": "ACC-CAT-06.webp",
+      "approved_sha256": null,
+      "source_ref": null
+    }
+  ]
+}
