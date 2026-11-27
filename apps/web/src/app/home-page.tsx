@@ -313,7 +313,7 @@ export default function HomePage({language = "fr"}: {language?: "fr" | "ar"}) {
           />
         )}
         <p className="eyebrow"><span className="eyebrow-line" /> {t("SIGNALÉTIQUE & COMMUNICATION VISUELLE", "اللافتات والتواصل البصري")}</p>
-        <h1 id="home-title">{rtl ? <>لافتتك التجارية،<br /> <strong>بكل سهولة.</strong></> : <>Avoir son enseigne n&apos;a<span className="mobile-headline-break"><br /></span> jamais<br className="headline-break" /> <strong>été aussi simple.</strong></>}</h1>
+        <h1 id="home-title">{rtl ? <>لوحتك الإعلانية،<br /> <strong>بكل سهولة.</strong></> : <>Avoir son enseigne n&apos;a<span className="mobile-headline-break"><br /></span> jamais<br className="headline-break" /> <strong>été aussi simple.</strong></>}</h1>
         <div className="headline-stroke" aria-hidden="true" />
         <a className="mobile-hero-action" href="#familles">
           {t("Voir les produits", "اكتشف المنتجات")} <ArrowDown size={17} aria-hidden="true" />

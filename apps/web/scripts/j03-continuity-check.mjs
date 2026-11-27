@@ -5,7 +5,7 @@ try {
  for(const width of [390,1440]){
   const p=await b.newPage({viewport:{width,height:844},hasTouch:width===390,isMobile:width===390});
   await p.goto(origin+'/ar',{waitUntil:'networkidle'});
-  assert.match(await p.locator('h1').innerText(),/لافتتك التجارية،\s*بكل سهولة\./);
+  assert.match(await p.locator('h1').innerText(),/لوحتك الإعلانية،\s*بكل سهولة\./);
   await p.screenshot({path:'proof/j03-accroche-ar-'+width+'.jpeg',type:'jpeg',quality:92,fullPage:true});
   const card=p.locator('.category-card').first();
   if(width===390)await card.locator('button').tap();else await card.hover();

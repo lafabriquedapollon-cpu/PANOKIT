@@ -29,7 +29,10 @@ jobs:
           git diff --exit-code c5f74edc3f68f8df8476e2272b06473dadad163d HEAD -- apps/web/public pnpm-lock.yaml apps/api
           test "$(git hash-object apps/web/public/images/panokit-cards.webp)" = 51caff5be3a527de8a7e9946b2079095a7365817
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @panokit/web build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
       - name: Browser setup pinned to previously qualified R4 lock
         run: |
           set -euo pipefail
