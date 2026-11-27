@@ -1,5 +1,5 @@
 "use client";
-import {useRef,useState,type FormEvent,type ReactNode} from "react";
+import {useRef,useState,type FormEvent,type ReactNode,type ChangeEvent} from "react";
 import styles from "./guest-checkout.module.css";
 type Lang="fr"|"ar";
 type Mode="pickup"|"delivery";
@@ -46,11 +46,11 @@ export default function GuestCheckoutLab({lang,preview,onBack,onLanguage}:LabRev
   setValues(empty());setErrors([]);setQuote(null);move("review");
  });}
  const field=(key:Field,required=true)=>{
-  const props={id:"j07-"+key,name:key,value:values[key],required,disabled:busy,autoComplete:"off",maxLength:{name:120,phone:40,email:254,city:100,address:300}[key],"aria-invalid":errors.includes(key)||undefined,"aria-describedby":errors.includes(key)?"j07-"+key+"-error":key==="email"?"j07-email-hint":undefined,onChange:(e:React.ChangeEvent<HTMLInputElement|HTMLTextAreaElement>)=>{setValues(v=>({...v,[key]:e.target.value}));setErrors(v=>v.filter(x=>x!==key));}};
+  const props={id:"j07-"+key,name:key,value:values[key],required,disabled:busy,autoComplete:"off",maxLength:{name:120,phone:40,email:254,city:100,address:300}[key],"aria-invalid":errors.includes(key)||undefined,"aria-describedby":errors.includes(key)?"j07-"+key+"-error":key==="email"?"j07-email-hint":undefined,onChange:(e:ChangeEvent<HTMLInputElement|HTMLTextAreaElement>)=>{setValues(v=>({...v,[key]:e.target.value}));setErrors(v=>v.filter(x=>x!==key));}};
   return <div className={styles.field}><label htmlFor={props.id}>{t[key]} {required?<span className={styles.req}>*</span>:<span className={styles.optional}>{t.optional}</span>}</label>{key==="address"?<textarea {...props}/>:<input {...props} type={key==="phone"?"tel":key==="email"?"email":"text"} dir={key==="phone"||key==="email"?"ltr":"auto"}/>}
   {errors.includes(key)?<span className={styles.errmsg} id={"j07-"+key+"-error"}>{t.invalid[key]}</span>:key==="email"?<p className={styles.hint} id="j07-email-hint">{t.emailHint}</p>:null}</div>;
  };
- const showQuote=stage==="coordinates"&&quote!==null,a=showQuote?quote.amounts:null,step=stage==="selection"?3:stage==="review"?5:4;
+ const showQuote=stage==="coordinates"&&quote!==null,a=showQuote?quote?.amounts??null:null,step=stage==="selection"?3:stage==="review"?5:4;
  return <main className={styles.page} lang={lang} dir={lang==="ar"?"rtl":"ltr"} data-testid="j07-lab" data-stage={stage}>
   <header className={styles.header}><div className={styles.head}><div className={styles.brandgroup}><span className={styles.brand}>PANOKIT</span><span className={styles.brandline}>{t.brand}</span></div><span className={styles.lab}>{t.lab}</span></div></header>
   <div className={styles.wrap}><div className={styles.topline}><button type="button" className={styles.back} disabled={busy} onClick={back}><span aria-hidden="true">{lang==="ar"?"→":"←"}</span> {stage==="selection"?t.studio:t.back}</button><div className={styles.locale}>{(["fr","ar"] as const).map(l=><button key={l} type="button" aria-pressed={lang===l} disabled={busy} onClick={()=>onLanguage(l)}>{l==="fr"?"FR":"العربية"}</button>)}</div></div>
@@ -63,6 +63,6 @@ export default function GuestCheckoutLab({lang,preview,onBack,onLanguage}:LabRev
   {errors.length>0&&<p role="alert" className={styles.alert}>{t.error}</p>}<div className={styles.fields2}>{field("name")}{field("phone")}</div>{field("email",false)}
   {mode==="delivery"&&<div className={styles.address}><h3>{t.addressTitle}</h3>{field("city")}{field("address")}</div>}
   <button className={styles.action} data-main-action type="submit" disabled={busy}>{busy?t.loading:t.next}<span aria-hidden="true"> {lang==="ar"?"←":"→"}</span></button><p className={styles.nextnote}>{t.nextHint}</p></form>}
-  </section><aside className={styles.panel+" "+styles.summary}><h2>{t.kit}</h2><figure className={styles.figure} data-testid="j07-preview">{preview}<figcaption><span>{t.caption}</span><span dir="ltr">DEV-01</span></figcaption></figure><p className={styles.model}>{t.model}</p>{stage!=="selection"&&<p className={styles.hint}>{t[mode]}</p>}<div className={styles.totals}><h3>{t.summary}</h3>{a?<>{([a.kitNetMinor,a.optionsNetMinor,a.deliveryNetMinor,a.netMinor,a.vatMinor]).map((n,i)=><div className={styles.line} key={i}><span>{t.lines[i]}{i===4?" ("+quote.vatBps/100+" %)":""}</span><b dir="ltr" data-amount>{money(n)}</b></div>)}<div className={styles.grand}><span>{t.total}</span><b className={styles.money} data-testid="j07-total" dir="ltr" data-amount>{money(a.totalMinor)}</b></div><p className={styles.hint}>{t.fixture}</p></>:<p className={styles.hint}>{t.unavailable}</p>}</div><p className={styles.safe}>{t.safe}</p></aside></div><p className={styles.foot}>{t.foot}</p></div>
+  </section><aside className={styles.panel+" "+styles.summary}><h2>{t.kit}</h2><figure className={styles.figure} data-testid="j07-preview">{preview}<figcaption><span>{t.caption}</span><span dir="ltr">DEV-01</span></figcaption></figure><p className={styles.model}>{t.model}</p>{stage!=="selection"&&<p className={styles.hint}>{t[mode]}</p>}<div className={styles.totals}><h3>{t.summary}</h3>{a?<>{([a.kitNetMinor,a.optionsNetMinor,a.deliveryNetMinor,a.netMinor,a.vatMinor]).map((n,i)=><div className={styles.line} key={i}><span>{t.lines[i]}{i===4?" ("+(quote?.vatBps??0)/100+" %)":""}</span><b dir="ltr" data-amount>{money(n)}</b></div>)}<div className={styles.grand}><span>{t.total}</span><b className={styles.money} data-testid="j07-total" dir="ltr" data-amount>{money(a.totalMinor)}</b></div><p className={styles.hint}>{t.fixture}</p></>:<p className={styles.hint}>{t.unavailable}</p>}</div><p className={styles.safe}>{t.safe}</p></aside></div><p className={styles.foot}>{t.foot}</p></div>
  </main>;
 }
