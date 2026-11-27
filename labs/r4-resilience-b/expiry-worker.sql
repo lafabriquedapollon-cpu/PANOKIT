@@ -28,12 +28,13 @@ BEGIN
  IF NOT FOUND THEN RAISE EXCEPTION 'denied' USING ERRCODE='42501'; END IF;
  SELECT * INTO prior FROM sec01_admin.expiry_worker_runs WHERE run_id=p_run;
  IF FOUND THEN RETURN QUERY SELECT prior.expired,prior.purged_attempts,prior.purged_proofs,prior.complete; RETURN; END IF;
+ -- Acquire replay-generation lock before any account lock, matching reservation ordering.
+ LOCK TABLE sec01_admin.replay_key_state IN SHARE MODE;
  FOR d IN SELECT * FROM sec01_admin.list_due_expiry(p_limit) LOOP
    IF sec01_admin.expire_due_session(d.session_id) THEN n:=n+1; END IF;
  END LOOP;
  -- Fixed conservative LAB retention, no caller-controlled cutoff. Preserve bindings, sessions, ledger and audit.
  -- Lock replay generation against rotation and avoid deleting an active proof. Retain a 24h margin over 120s replay window.
- LOCK TABLE sec01_admin.replay_key_state IN SHARE MODE;
  checked:=clock_timestamp();
  WITH old AS (SELECT t.proof_digest FROM sec01_admin.totp_attempts t JOIN sec01_admin.mfa_proofs p USING(proof_digest)
  WHERE t.attempted_at<=checked-interval '24 hours' AND p.expires_at<=checked-interval '24 hours'
