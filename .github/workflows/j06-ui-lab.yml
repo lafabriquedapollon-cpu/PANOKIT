@@ -35,6 +35,8 @@ jobs:
           trap 'rm -f apps/web/src/app/j07-lab/page.tsx; rmdir apps/web/src/app/j07-lab' EXIT
           cp apps/web/src/lab/j07/lab-page.tsx apps/web/src/app/j07-lab/page.tsx
           pnpm build
+          pnpm --filter @panokit/web exec tsc --target ES2022 --lib ES2022,DOM --module commonjs --moduleResolution node --jsx react-jsx --esModuleInterop --skipLibCheck --strict --outDir .next/j07-renderer src/lab/j07/server-visual.ts
+          test -f apps/web/.next/j07-renderer/lab/j07/server-visual.js
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -58,6 +60,8 @@ jobs:
           export J06_PORT="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-pg-lab.js"
           export J06_HTTP="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-http-lab.js"
           export J07_REACT_ORIGIN="http://127.0.0.1:39177"
+          export J07_RENDERER="$GITHUB_WORKSPACE/apps/web/.next/j07-renderer/lab/j07/server-visual.js"
+          export J07_MASTER_NIGHT="$GITHUB_WORKSPACE/apps/web/public/studio-v4/STU-ENV-01-master-night.svg"
           pnpm --filter @panokit/web exec next start --hostname 127.0.0.1 --port 39177 >"$RUNNER_TEMP/j07-next.log" 2>&1 &
           next_pid=$!
           trap 'kill "$next_pid" 2>/dev/null || true; wait "$next_pid" 2>/dev/null || true' EXIT
