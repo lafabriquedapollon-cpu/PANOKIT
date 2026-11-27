@@ -2,10 +2,13 @@ name: J05 R2 V4 Studio FUE (no deploy)
 on:
   push:
     branches: [feature/j05-r2-p0-20261127]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 jobs:
   studio-evidence:
+    if: github.event_name == 'push' || github.head_ref == 'feature/j05-r2-p0-20261127'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -22,9 +25,11 @@ jobs:
       - name: Verify exact product source boundary
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor df9c944e5e81131e7e044191df9ce5e0ab61c956 HEAD
-          test "$(git diff --name-only df9c944e5e81131e7e044191df9ce5e0ab61c956 HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j05-restored-fue.yml apps/web/src/app/studio/page.tsx apps/web/src/app/studio/studio-client.tsx apps/web/src/app/studio/studio.css apps/web/public/studio-v4/STU-ENV-01-master-day.svg apps/web/public/studio-v4/STU-ENV-01-master-night.svg | LC_ALL=C sort)"
-          git diff --exit-code df9c944e5e81131e7e044191df9ce5e0ab61c956 HEAD -- apps/api packages pnpm-lock.yaml
+          git merge-base --is-ancestor 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD
+          git merge-base --is-ancestor 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD
+          test "$(git diff --name-only 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j02-bilingual.yml .github/workflows/j03-continuity.yml .github/workflows/j03-fue.yml .github/workflows/j03-industrial.yml .github/workflows/j03-pg.yml .github/workflows/j05-restored-fue.yml apps/web/public/studio-v4/STU-ENV-01-master-day.svg apps/web/public/studio-v4/STU-ENV-01-master-night.svg apps/web/src/app/studio/page.tsx apps/web/src/app/studio/studio-client.tsx apps/web/src/app/studio/studio.css | LC_ALL=C sort)"
+          git diff --exit-code 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD -- apps/web apps/api packages pnpm-lock.yaml
+          test "$(git diff --name-only 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j02-bilingual.yml .github/workflows/j03-continuity.yml .github/workflows/j03-fue.yml .github/workflows/j03-industrial.yml .github/workflows/j03-pg.yml .github/workflows/j05-restored-fue.yml | LC_ALL=C sort)"
           (cd apps/web/public/studio-v4; printf '%s\n' '0ef2a0df848f1857d4f055c361ae3ccc24b98406b7bc3bfd4b0779976a3f7912  STU-ENV-01-master-day.svg' '460da17eda4a535a051a6bfea3fa329d5d294cc419a75ea8d583247366f0ea6c  STU-ENV-01-master-night.svg' | sha256sum -c -)
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
