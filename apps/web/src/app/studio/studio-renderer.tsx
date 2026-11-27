@@ -116,7 +116,7 @@ export function nameNeedsAdaptation(name: string) {
 function fit(line: string, desired: number, width: number) {
   return Math.min(desired, width / Math.max(1, Array.from(line).length) / 1.3);
 }
-export function Sign({data,template,view,palette,lang,thumb=false,defaultBoard=false}: {data:Document;template:Template;view:View;palette:SignColors;lang:StudioLanguage;thumb?:boolean;defaultBoard?:boolean}) {
+export function Sign({data,template,view,palette,lang,thumb=false,defaultBoard=false,masterHref}: {data:Document;template:Template;view:View;palette:SignColors;lang:StudioLanguage;thumb?:boolean;defaultBoard?:boolean;masterHref?:string}) {
   const facade=view!=="plat"&&!thumb, night=view==="nuit";
   const w=facade?461:thumb?200:730, h=facade?73:thumb?70:246;
   const lines=splitPreservingText(data.name), long=nameNeedsAdaptation(data.name);
@@ -144,7 +144,7 @@ export function Sign({data,template,view,palette,lang,thumb=false,defaultBoard=f
   );
   const label=lang==="ar"?"معاينة توضيحية، غير معتمدة":"Aperçu indicatif, non BAT";
   return <svg className="studio-sign" viewBox={thumb?"0 0 200 70":"0 0 880 430"} role="img" aria-label={label+" — "+tr(lang,TEMPLATES[template-1][0])+": "+data.name}>
-    {facade?<><image data-studio-master="true" href={MASTER[view as "jour"|"nuit"]} width="880" height="430"/>{!defaultBoard&&<polygon data-studio-board="true" points="120.98,139.88 613.63,103.34 613.63,186.33 120.98,198.15" fill={night?palette.night:palette.board}/>}<g transform={FRONT}><g transform="translate(19 38)">{content}</g></g></>:thumb?<><rect width="200" height="70" rx="3" fill={palette.board}/>{content}</>:<><rect width="880" height="430" fill="#faf7f0"/><rect x="75" y="92" width="730" height="246" rx="4" fill={palette.board} stroke="#55534b" strokeWidth="3"/><rect x="83" y="100" width="714" height="230" fill="none" stroke="#cba775"/><g transform="translate(75 92)">{content}</g></>}
+    {facade?<><image data-studio-master="true" href={masterHref??MASTER[view as "jour"|"nuit"]} width="880" height="430"/>{!defaultBoard&&<polygon data-studio-board="true" points="120.98,139.88 613.63,103.34 613.63,186.33 120.98,198.15" fill={night?palette.night:palette.board}/>}<g transform={FRONT}><g transform="translate(19 38)">{content}</g></g></>:thumb?<><rect width="200" height="70" rx="3" fill={palette.board}/>{content}</>:<><rect width="880" height="430" fill="#faf7f0"/><rect x="75" y="92" width="730" height="246" rx="4" fill={palette.board} stroke="#55534b" strokeWidth="3"/><rect x="83" y="100" width="714" height="230" fill="none" stroke="#cba775"/><g transform="translate(75 92)">{content}</g></>}
     <title>{label}</title>
   </svg>;
 }
