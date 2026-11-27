@@ -6,6 +6,7 @@ DO $guard$ BEGIN
  OR to_regprocedure('sec01_admin.open_credential_maintenance(uuid,uuid)') IS NULL
  THEN RAISE EXCEPTION 'disposable lab only'; END IF;
 END $guard$;
+GRANT SELECT ("createdAt") ON public."session" TO sec01_admin_owner;
 SET LOCAL ROLE sec01_admin_owner;
 CREATE TABLE sec01_admin.maintenance_recovery(
  operation_id uuid PRIMARY KEY, actor_id uuid NOT NULL REFERENCES sec01_admin.accounts,
@@ -54,6 +55,7 @@ BEGIN
  SELECT * INTO j FROM sec01_admin.maintenance_recovery WHERE operation_id=p_op AND actor_id=p_actor;
  IF NOT FOUND OR j.phase NOT IN ('frozen','verified') OR a.active OR NOT a.can_edit
  OR NOT EXISTS(SELECT 1 FROM sec01_admin.credential_maintenance WHERE actor_id=p_actor AND operation_id=p_op)
+ OR NOT EXISTS(SELECT 1 FROM public."session" WHERE id=p_provider AND "userId"=a.better_auth_subject AND "createdAt">=j.opened_at)
  OR NOT EXISTS(SELECT 1 FROM public."user" WHERE id=a.better_auth_subject AND "twoFactorEnabled"=true)
  THEN RAISE EXCEPTION 'denied' USING ERRCODE='42501'; END IF;
  IF j.phase='verified' THEN RETURN 'verified'; END IF;
