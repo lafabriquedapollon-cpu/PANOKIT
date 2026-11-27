@@ -59,7 +59,7 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
     await proxy(req,res,req.url);return;
    }
    if(req.method==='GET'&&req.url==='/preview.svg'){
-    if(!live(session)||session.busy||session.stage!=='contact'||req.headers['sec-fetch-site']==='cross-site'){unavailable(res,403);return;}
+    if(!live(session)||session.busy||(session.stage!=='contact'&&!(upstream&&session.stage==='acknowledged'))||req.headers['sec-fetch-site']==='cross-site'){unavailable(res,403);return;}
     const rendered=upstream?session.visualBytes:bytes;if(!rendered){unavailable(res,403);return;}
     session.previewServed=true;res.writeHead(200,{...headers,'content-type':'image/svg+xml'});res.end(rendered);return;
    }
@@ -101,7 +101,7 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
      const result=await domain.acknowledgeLabVisual(input,session.cap,manifest,connect);
      session.stage='closed';
      if(result.status!=='lab_visual_acknowledged'||result.orderable!==false||!live(session)){unavailable(res);return;}
-     send(res,200,{state:'acknowledged',orderable:false});return;
+     if(upstream)session.stage='acknowledged';send(res,200,{state:'acknowledged',orderable:false});return;
     }
     unavailable(res,400);
    }finally{if(session)session.busy=false;}
