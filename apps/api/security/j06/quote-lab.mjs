@@ -145,12 +145,25 @@ try{
  const manifest={receiptId:pickupReceipt,fingerprint:lease.quote.fingerprint,visualVersion:'lab-preview-v1',visualDigest};
  const visualInput={leaseToken:guestPickupToken,receiptId:pickupReceipt,visualVersion:manifest.visualVersion,visualDigest,statementVersion:'lab-visual-v1',locale:'fr',accepted:true};
  const acknowledge=(input=visualInput,cap=session,m=manifest,connection=adapter)=>acknowledgeLabVisual(input,cap,m,connection);
+ const archiveBytes=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><text>LAB fixture</text></svg>','utf8');
+ const archiveDigest=createHash('sha256').update(archiveBytes).digest('hex');
+ const configuredInput={...visualInput,visualVersion:'lab-config-v1',visualDigest:archiveDigest},configuredManifest={...manifest,visualVersion:'lab-config-v1',visualDigest:archiveDigest};
+ const archiveCount=async()=>Number(await scalar(admin,'select count(*) from j06_private.guest_visual_archive'));
+ const acknowledgeConfigured=(connection=adapter)=>acknowledgeLabVisual(configuredInput,session,configuredManifest,connection,archiveBytes);
  await vtest('V01 explicit exact version, statement and manifest required',async()=>{
   for(const patch of [{accepted:false},{accepted:'true'},{statementVersion:'lab-visual-v0'},{locale:'en'},{price:1}])assert.equal((await acknowledge({...visualInput,...patch})).reason,'invalid_request');
   assert.equal((await acknowledge({...visualInput,visualVersion:'lab-preview-v0'})).reason,'visual_mismatch');
   assert.equal((await acknowledge({...visualInput,visualDigest:'0'.repeat(64)})).reason,'visual_mismatch');
   assert.equal((await acknowledge(visualInput,session,{...manifest,fingerprint:'0'.repeat(64)})).reason,'visual_mismatch');
-  assert.equal(await consentCount(),0);
+  assert.equal((await acknowledgeLabVisual(configuredInput,session,configuredManifest,adapter)).reason,'visual_mismatch');
+  assert.equal((await acknowledgeLabVisual(configuredInput,session,configuredManifest,adapter,Buffer.from('tampered'))).reason,'visual_mismatch');
+  const archiveArgs=[hashToken(guestPickupToken),hashToken(session),pickupReceipt,manifest.fingerprint,'lab-config-v1',archiveDigest,'fr'];
+  await runtime.query('begin isolation level serializable');
+  try{
+   assert.equal(await scalar(runtime,'select j06_private.record_guest_visual_consent($1,$2,$3::uuid,$4,$5,$6,$7)',archiveArgs),false);
+   assert.equal(await scalar(runtime,'select j06_private.record_guest_visual_consent($1,$2,$3::uuid,$4,$5,$6,$7,$8::bytea)',[...archiveArgs,Buffer.from('tampered')]),false);
+  }finally{await runtime.query('rollback');}
+  assert.equal(await consentCount(),0);assert.equal(await archiveCount(),0);
  });
  await vtest('V02 cross-session and wrong receipt denied; SQL privileges restricted',async()=>{
   assert.equal((await acknowledge(visualInput,otherSession)).reason,'lease_unavailable');
@@ -169,16 +182,17 @@ try{
  });
  await vtest('V03 write failure rolls back consent',async()=>{
   const broken=async()=>{const c=await adapter();return {...c,query:async(q,a)=>{const result=await c.query(q,a);if(q.includes('record_guest_visual_consent'))throw Error('fixture rollback');return result;}}};
-  assert.equal((await acknowledge(visualInput,session,manifest,broken)).reason,'calculation_unavailable');assert.equal(await consentCount(),0);
+  assert.equal((await acknowledgeConfigured(broken)).reason,'calculation_unavailable');assert.equal(await consentCount(),0);assert.equal(await archiveCount(),0);
  });
  await vtest('V04 concurrent acknowledgement writes exactly one immutable proof',async()=>{
-  const results=await Promise.all([acknowledge(),acknowledge()]);
+  const results=await Promise.all([acknowledgeConfigured(),acknowledgeConfigured()]);
   const success=results.filter(x=>x.status==='lab_visual_acknowledged');
   assert.equal(success.length,1);assert.equal(success[0].orderable,false);
   assert.equal(await consentCount(),1);
   const row=(await admin.query('select receipt_id::text,fingerprint,visual_version,visual_digest,statement_version,locale from j06_private.guest_visual_consents')).rows[0];
-  assert.deepEqual(row,{receipt_id:pickupReceipt,fingerprint:manifest.fingerprint,visual_version:manifest.visualVersion,visual_digest:visualDigest,statement_version:'lab-visual-v1',locale:'fr'});
-  assert.equal((await acknowledge()).reason,'consent_unavailable');
+  assert.deepEqual(row,{receipt_id:pickupReceipt,fingerprint:manifest.fingerprint,visual_version:configuredManifest.visualVersion,visual_digest:archiveDigest,statement_version:'lab-visual-v1',locale:'fr'});
+  assert.equal(await archiveCount(),1);assert.deepEqual(await scalar(admin,'select svg_bytes from j06_private.guest_visual_archive where receipt_id=$1',[pickupReceipt]),archiveBytes);
+  assert.equal((await acknowledgeConfigured()).reason,'consent_unavailable');
   assert.equal((await acknowledge({...visualInput,visualVersion:'lab-preview-v2'},session,{...manifest,visualVersion:'lab-preview-v2'})).reason,'consent_unavailable');
  });
  await vtest('V05 Arabic delivery consent linked to its own receipt',async()=>{
@@ -205,7 +219,7 @@ try{
  await test('B16 database failure and wrong identity fail closed',async()=>{assert.equal((await persistLabQuote(request,async()=>{throw Error('private');})).reason,'calculation_unavailable');const wrong=async()=>{const c=await login('j03_reader');return {query:(q,a)=>c.query(q,a),close:()=>close(c)};};assert.equal((await persistLabQuote(request,wrong)).reason,'calculation_unavailable');});
  await ctest('C08 restart retains lease history, not authority',async()=>{assert.equal(Number(await scalar(admin,'select count(*) from j06_private.leases')),6);listener=await startQuoteHttpLab(adapter);const a=await leaseCall('revalidate',{leaseToken:lease.leaseToken});assert.equal(a.status,409);assert.equal(a.body.reason,'industrial_unavailable');});
  await gtest('G08 restart preserves receipts and withdrawn industry rejects lease',async()=>{assert.equal(await admissionCount(),2);assert.equal((await admit(guestCurrentToken)).reason,'industrial_unavailable');});
- await vtest('V07 restart retains evidence but no order authority',async()=>{assert.equal(await consentCount(),2);assert.equal((await acknowledge()).reason,'industrial_unavailable');});
+ await vtest('V07 restart retains evidence but no order authority',async()=>{assert.equal(await consentCount(),2);assert.equal(await archiveCount(),1);assert.deepEqual(await scalar(admin,'select svg_bytes from j06_private.guest_visual_archive where receipt_id=$1',[pickupReceipt]),archiveBytes);assert.equal((await acknowledge()).reason,'industrial_unavailable');});
  assert.equal(vPassed,7);console.log('J07_VISUAL_RESULT '+JSON.stringify({passed:vPassed,failed:0,notRun:0}));
  assert.equal(hPassed,5);console.log('J07_SESSION_RESULT '+JSON.stringify({passed:hPassed,failed:0,notRun:0}));
  assert.equal(gPassed,8);console.log('J07_D1B_RESULT '+JSON.stringify({passed:gPassed,failed:0,notRun:0}));
