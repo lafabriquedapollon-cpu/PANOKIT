@@ -6,10 +6,11 @@ const exact=(v,keys)=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.k
 const statementVersion='lab-visual-v1',visualVersion='lab-preview-v1';
 const statement={fr:'Je confirme avoir vérifié cet aperçu de simulation LAB. Aucun paiement, aucune commande ni BAT.',ar:'أؤكد أنني راجعت هذه المعاينة التجريبية. لا دفع ولا طلب ولا اعتماد للإنتاج.'};
 // Loopback-only transport harness. No public route, actual customer data or commercial authority.
-export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=900000,reactLabOrigin=null}){
+export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=900000,reactLabOrigin=null,renderVisual=null}){
  const sessions=new Map(),bytes=Buffer.from(preview),visualDigest=digest(bytes);
  let origin;
  const upstream=reactLabOrigin===null?null:new URL(reactLabOrigin);
+ if(upstream&&typeof renderVisual!=='function')throw Error('RENDERER_REQUIRED');
  if(upstream&&(upstream.protocol!=='http:'||upstream.hostname!=='127.0.0.1'||!upstream.port||upstream.pathname!=='/'||upstream.search||upstream.hash||upstream.username||upstream.password))throw Error('REACT_LAB_ORIGIN');
  const project=q=>{
   if(!q||q.scope!=='LAB'||q.orderable!==false||q.currency!=='MAD')throw Error('QUOTE');
@@ -58,8 +59,9 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
     await proxy(req,res,req.url);return;
    }
    if(req.method==='GET'&&req.url==='/preview.svg'){
-    if(upstream||!live(session)||session.busy||session.stage!=='contact'||req.headers['sec-fetch-site']==='cross-site'){unavailable(res,403);return;}
-    session.previewServed=true;res.writeHead(200,{...headers,'content-type':'image/svg+xml'});res.end(bytes);return;
+    if(!live(session)||session.busy||session.stage!=='contact'||req.headers['sec-fetch-site']==='cross-site'){unavailable(res,403);return;}
+    const rendered=upstream?session.visualBytes:bytes;if(!rendered){unavailable(res,403);return;}
+    session.previewServed=true;res.writeHead(200,{...headers,'content-type':'image/svg+xml'});res.end(rendered);return;
    }
    if(req.method!=='POST'||req.url!=='/action'||req.headers.origin!==origin||req.headers['content-type']!=='application/json'||req.headers['content-encoding']!==undefined ){unavailable(res,403);return;}
    if(session?.busy){unavailable(res);return;}
@@ -73,7 +75,12 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
      res.setHeader('set-cookie',cookie(next.id));send(res,200,{state:'new',orderable:false});return;
     }
     if(!live(session)){unavailable(res,403);return;}
-    if(exact(body,['action','mode'])&&body.action==='issue'&&['pickup','delivery'].includes(body.mode)&&session.stage==='new'){
+    if(exact(body,upstream?['action','mode','configuration']:['action','mode'])&&body.action==='issue'&&['pickup','delivery'].includes(body.mode)&&session.stage==='new'){
+     if(upstream){
+      const svg=renderVisual(body.configuration);
+      if(typeof svg!=='string'||Buffer.byteLength(svg)>2_000_000){send(res,422,{state:'visual_unavailable',orderable:false});return;}
+      session.visualBytes=Buffer.from(svg,'utf8');session.visualDigest=digest(session.visualBytes);session.visualVersion='lab-config-v1';
+     }
      const fulfillment=body.mode==='pickup'?{mode:'pickup',depotId:'test-depot'}:{mode:'delivery',destinationRef:'lab-destination'};
      const result=await domain.issueGuestLabLease({...fixture,expectedTariffRevision:null,fulfillment},session.cap,connect);
      if(result.status!=='lab_lease'||result.orderable!==false||!live(session)){unavailable(res);return;}
@@ -85,11 +92,12 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
      if(result.status==='unavailable'&&result.reason==='contact_invalid'){send(res,422,{state:'contact_invalid',fields:result.fields,orderable:false});return;}
      if(result.status!=='lab_guest_admitted'||result.orderable!==false||!live(session)){session.stage='closed';unavailable(res);return;}
      session.receipt=result.receiptId;session.locale=body.locale;session.stage='contact';
-     send(res,200,upstream?{state:'contact',orderable:false}:{state:'contact',visualVersion,visualDigest,statementVersion,statement:statement[body.locale],orderable:false});return;
+     send(res,200,{state:'contact',visualVersion:upstream?session.visualVersion:visualVersion,visualDigest:upstream?session.visualDigest:visualDigest,statementVersion,statement:statement[body.locale],orderable:false});return;
     }
-    if(!upstream&&exact(body,['action','accepted','visualVersion','visualDigest','statementVersion'])&&body.action==='visual'&&body.accepted===true&&session.stage==='contact'&&session.previewServed&&body.visualVersion===visualVersion&&body.visualDigest===visualDigest&&body.statementVersion===statementVersion){
-     const input={leaseToken:session.lease,receiptId:session.receipt,visualVersion,visualDigest,statementVersion,locale:session.locale,accepted:true};
-     const manifest={receiptId:session.receipt,fingerprint:session.fingerprint,visualVersion,visualDigest};
+    if(exact(body,['action','accepted','visualVersion','visualDigest','statementVersion'])&&body.action==='visual'&&body.accepted===true&&session.stage==='contact'&&session.previewServed&&body.visualVersion===(upstream?session.visualVersion:visualVersion)&&body.visualDigest===(upstream?session.visualDigest:visualDigest)&&body.statementVersion===statementVersion){
+     const version=upstream?session.visualVersion:visualVersion,hash=upstream?session.visualDigest:visualDigest;
+     const input={leaseToken:session.lease,receiptId:session.receipt,visualVersion:version,visualDigest:hash,statementVersion,locale:session.locale,accepted:true};
+     const manifest={receiptId:session.receipt,fingerprint:session.fingerprint,visualVersion:version,visualDigest:hash};
      const result=await domain.acknowledgeLabVisual(input,session.cap,manifest,connect);
      session.stage='closed';
      if(result.status!=='lab_visual_acknowledged'||result.orderable!==false||!live(session)){unavailable(res);return;}
