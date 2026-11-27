@@ -88,7 +88,7 @@ try{
   assert.deepEqual(Object.keys(success[0]).sort(),['orderable','receiptId','scope','status']);
   assert.equal(await admissionCount(),1);
   assert.equal(await scalar(admin,'select receipt_id::text from j06_private.guest_admissions'),success[0].receiptId);
-  assert.equal((await admit(guestPickupToken)).reason,'lease_consumed');
+  assert.equal((await admit(guestPickupToken)).reason,'admission_unavailable');
  });
  await gtest('G05 delivery mode from lease requires address, no PII persisted',async()=>{
   const d=await leaseCall('lease',delivery);assert.equal(d.status,200);
