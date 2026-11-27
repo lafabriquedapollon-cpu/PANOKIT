@@ -25,7 +25,7 @@ try{
     await p.waitForTimeout(650);
    }
    if(mobile)await btn.tap();else{await btn.focus();await btn.press('Enter');}
-   assert.equal(await btn.getAttribute('aria-expanded'),'true');const links=card.locator('.family-option');assert.equal(await links.count(),2);assert.equal(await links.first().getAttribute('href'),'/catalogue/enseignes?categorie=lumineuses');assert.match(await links.first().innerText(),/مضيئة/);
+   assert.equal(await btn.getAttribute('aria-expanded'),'true');const links=card.locator('.family-option');assert.equal(await links.count(),2);assert.equal(await links.first().getAttribute('href'),'/catalogue/enseignes?categorie=lumineuses&lang=ar');assert.match(await links.first().innerText(),/مضيئة/);
    if(record){await p.waitForTimeout(1100);await p.locator('.site-footer').scrollIntoViewIfNeeded();await p.waitForTimeout(800);}
    await p.locator('.home-language-switch').click();await p.waitForURL(origin+'/');await p.waitForFunction(()=>document.documentElement.lang==='fr'&&document.documentElement.dir==='ltr');
    assert.match(await p.locator('h1').innerText(),/Avoir son enseigne/);
@@ -35,6 +35,6 @@ try{
  }
  const c=await b.newContext({viewport:{width:1440,height:1000}}),p=await c.newPage();
  await p.goto(origin+'/ar',{waitUntil:'networkidle'});
- const card=p.locator('.category-card').first();await card.hover();await card.locator('.family-option').first().click();await p.waitForURL('**/catalogue/enseignes?categorie=lumineuses');assert.match(await p.locator('h1').innerText(),/Enseignes/i);assert.equal(await p.locator('html').getAttribute('lang'),'fr');
+ const card=p.locator('.category-card').first();await card.hover();await card.locator('.family-option').first().click();await p.waitForURL(u=>u.pathname==='/catalogue/enseignes'&&u.searchParams.get('lang')==='ar');assert.match(await p.locator('h1').innerText(),/اللافتات/);assert.equal(await p.locator('.j03-main').getAttribute('dir'),'rtl');
  await c.close();console.log('J02_AR_CATALOGUE_HANDOFF PASS');
 }finally{await b.close();writeFileSync(join(out,'ar-report.json'),JSON.stringify({scope:'Arabic homepage only; catalogue remains French',viewports:report},null,2)+'\n');}
