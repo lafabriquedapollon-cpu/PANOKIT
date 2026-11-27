@@ -1,0 +1,16 @@
+{
+  "name": "panokit-ci-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "better-auth": "1.7.26",
+    "pg": "8.16.3",
+    "embedded-postgres": "17.12.0-beta.19",
+    "typescript": "5.9.3",
+    "reflect-metadata": "0.2.2",
+    "@nestjs/common": "11.2.10",
+    "@nestjs/core": "11.2.10",
+    "@nestjs/platform-express": "11.2.10"
+  }
+}
