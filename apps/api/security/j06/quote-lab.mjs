@@ -9,10 +9,10 @@ import pgDriver from 'pg';
 const {Client}=pgDriver;
 assert.deepEqual(process.argv.slice(2),['--disposable-lab']);assert(process.getuid()!==0);
 const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,industrialDigest}=require(process.env.J03_ADMISSION),{tariffLabDigest}=require(process.env.J06_ENGINE),{persistLabQuote}=require(process.env.J06_PORT),{startQuoteHttpLab}=require(process.env.J06_HTTP);
-const {admitLabGuest,issueGuestLabLease}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
+const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,lease,guestPickupToken,guestCurrentToken;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -21,6 +21,7 @@ async function test(name,fn){await fn();passed++;console.log('J06_B '+JSON.strin
 async function ctest(name,fn){await fn();cPassed++;console.log('J06_C '+JSON.stringify({name,status:'PASS'}));}
 async function gtest(name,fn){await fn();gPassed++;console.log('J07_D1B '+JSON.stringify({name,status:'PASS'}));}
 async function htest(name,fn){await fn();hPassed++;console.log('J07_SESSION '+JSON.stringify({name,status:'PASS'}));}
+async function vtest(name,fn){await fn();vPassed++;console.log('J07_VISUAL '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -124,7 +125,7 @@ try{
  await gtest('G04 concurrent double submission only one committed receipt',async()=>{
   const results=await Promise.all([admit(guestPickupToken),admit(guestPickupToken)]);
   const success=results.filter(x=>x.status==='lab_guest_admitted');
-  assert.equal(success.length,1);assert.equal(success[0].orderable,false);
+  assert.equal(success.length,1);assert.equal(success[0].orderable,false);pickupReceipt=success[0].receiptId;
   assert.deepEqual(Object.keys(success[0]).sort(),['orderable','receiptId','scope','status']);
   assert.equal(await admissionCount(),1);
   assert.equal(await scalar(admin,'select receipt_id::text from j06_private.guest_admissions'),success[0].receiptId);
@@ -134,10 +135,59 @@ try{
   const d=await issueGuest(delivery);assert.equal(d.status,'lab_lease');
   assert.equal((await admit(d.leaseToken)).reason,'contact_invalid');
   const good=await admit(d.leaseToken,{name:'عميل تجريبي',phone:'٠٦٠٠٠٠٠٠٠٠',city:'Ville Test',address:'12 rue Exemple'});
-  assert.equal(good.status,'lab_guest_admitted');assert.equal(good.orderable,false);
+  assert.equal(good.status,'lab_guest_admitted');assert.equal(good.orderable,false);deliveryReceipt=good.receiptId;deliveryToken=d.leaseToken;deliveryFingerprint=d.quote.fingerprint;
   assert.equal(await admissionCount(),2);
   const cols=(await admin.query("select column_name from information_schema.columns where table_schema='j06_private' and table_name='guest_admissions' order by column_name")).rows.map(x=>x.column_name);
   assert.deepEqual(cols,['fingerprint','receipt_id','recorded_at','token_hash']);
+ });
+ const consentCount=async()=>Number(await scalar(admin,'select count(*) from j06_private.guest_visual_consents'));
+ const visualDigest=hashToken('synthetic visual bytes v1');
+ const manifest={receiptId:pickupReceipt,fingerprint:lease.quote.fingerprint,visualVersion:'lab-preview-v1',visualDigest};
+ const visualInput={leaseToken:guestPickupToken,receiptId:pickupReceipt,visualVersion:manifest.visualVersion,visualDigest,statementVersion:'lab-visual-v1',locale:'fr',accepted:true};
+ const acknowledge=(input=visualInput,cap=session,m=manifest,connection=adapter)=>acknowledgeLabVisual(input,cap,m,connection);
+ await vtest('V01 explicit exact version, statement and manifest required',async()=>{
+  for(const patch of [{accepted:false},{accepted:'true'},{statementVersion:'lab-visual-v0'},{locale:'en'},{price:1}])assert.equal((await acknowledge({...visualInput,...patch})).reason,'invalid_request');
+  assert.equal((await acknowledge({...visualInput,visualVersion:'lab-preview-v0'})).reason,'visual_mismatch');
+  assert.equal((await acknowledge({...visualInput,visualDigest:'0'.repeat(64)})).reason,'visual_mismatch');
+  assert.equal((await acknowledge(visualInput,session,{...manifest,fingerprint:'0'.repeat(64)})).reason,'visual_mismatch');
+  assert.equal(await consentCount(),0);
+ });
+ await vtest('V02 cross-session and wrong receipt denied; SQL privileges restricted',async()=>{
+  assert.equal((await acknowledge(visualInput,otherSession)).reason,'lease_unavailable');
+  const wrong={...visualInput,receiptId:deliveryReceipt};
+  assert.equal((await acknowledge(wrong,session,{...manifest,receiptId:deliveryReceipt})).reason,'consent_unavailable');
+  const args=[hashToken(guestPickupToken),hashToken(otherSession),pickupReceipt,manifest.fingerprint,manifest.visualVersion,visualDigest,'fr'];
+  const q='select j06_private.record_guest_visual_consent($1,$2,$3::uuid,$4,$5,$6,$7)';
+  await runtime.query('begin isolation level serializable');
+  try{assert.equal(await scalar(runtime,q,args),false);}finally{await runtime.query('rollback');}
+  await denied(()=>editor.query(q,args));await denied(()=>runtime.query(q,args));
+  for(const c of [editor,approver,revoker,runtime,outsider]){
+   await denied(()=>c.query('select * from j06_private.guest_visual_consents'));
+   await denied(()=>c.query('delete from j06_private.guest_visual_consents'));
+  }
+  assert.equal(await consentCount(),0);
+ });
+ await vtest('V03 write failure rolls back consent',async()=>{
+  const broken=async()=>{const c=await adapter();return {...c,query:async(q,a)=>{const result=await c.query(q,a);if(q.includes('record_guest_visual_consent'))throw Error('fixture rollback');return result;}}};
+  assert.equal((await acknowledge(visualInput,session,manifest,broken)).reason,'calculation_unavailable');assert.equal(await consentCount(),0);
+ });
+ await vtest('V04 concurrent acknowledgement writes exactly one immutable proof',async()=>{
+  const results=await Promise.all([acknowledge(),acknowledge()]);
+  const success=results.filter(x=>x.status==='lab_visual_acknowledged');
+  assert.equal(success.length,1);assert.equal(success[0].orderable,false);
+  assert.equal(await consentCount(),1);
+  const row=(await admin.query('select receipt_id::text,fingerprint,visual_version,visual_digest,statement_version,locale from j06_private.guest_visual_consents')).rows[0];
+  assert.deepEqual(row,{receipt_id:pickupReceipt,fingerprint:manifest.fingerprint,visual_version:manifest.visualVersion,visual_digest:visualDigest,statement_version:'lab-visual-v1',locale:'fr'});
+  assert.equal((await acknowledge()).reason,'consent_unavailable');
+  assert.equal((await acknowledge({...visualInput,visualVersion:'lab-preview-v2'},session,{...manifest,visualVersion:'lab-preview-v2'})).reason,'consent_unavailable');
+ });
+ await vtest('V05 Arabic delivery consent linked to its own receipt',async()=>{
+  const m={...manifest,receiptId:deliveryReceipt,fingerprint:deliveryFingerprint};
+  const i={...visualInput,leaseToken:deliveryToken,receiptId:deliveryReceipt,locale:'ar'};
+  const result=await acknowledge(i,session,m);
+  assert.equal(result.status,'lab_visual_acknowledged');assert.equal(result.orderable,false);
+  assert.equal(await consentCount(),2);
+  assert.equal(await scalar(admin,"select locale from j06_private.guest_visual_consents where receipt_id=$1",[deliveryReceipt]),'ar');
  });
  await test('B08 injected price, zone, malformed JSON rejected',async()=>{for(const x of [{...request,price:1},{...delivery,fulfillment:{...delivery.fulfillment,zoneId:'test-zone'}},{...request,options:['test-a','test-a']}])assert.equal((await call(x)).status,400);const b=await fetch(listener.url,{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:'{' });assert.equal(b.status,400);assert.equal(Number(await scalar(admin,'select count(*) from j06_private.quotes')),2);});
  await test('B09 invalid mapping refused',async()=>{await assert.rejects(()=>save(editor,t2,tariffLabDigest(t2),{'real-address':{zoneId:'x',depotId:'y'}}),e=>e.code==='22023');});
@@ -145,6 +195,7 @@ try{
  await test('B11 rollback approval invisible and stale version rejected',async()=>{await approver.query('begin');assert.equal(await decide(approver,t2,'approved'),true);assert.equal((await calc({...request,expectedTariffRevision:2})).reason,'tariff_unavailable');await approver.query('rollback');assert.equal((await calc({...request,expectedTariffRevision:2})).reason,'tariff_unavailable');assert.equal(await decide(approver,t2,'approved'),true);assert.equal((await calc(request)).reason,'stale_selection');assert.equal((await calc({...request,expectedTariffRevision:2})).status,'lab_quote');});
  await ctest('C06 new approved tariff invalidates old lease',async()=>{const a=await leaseCall('revalidate',{leaseToken:lease.leaseToken});assert.equal(a.status,409);assert.equal(a.body.reason,'stale_selection');const b=await leaseCall('lease',{...request,expectedTariffRevision:2});assert.equal(b.status,200);lease=b.body;assert.equal(lease.quote.tariffRevision,2);});
  await gtest('G06 changed tariff rejects earlier lease before receipt write',async()=>{assert.equal((await admit(guestPickupToken)).reason,'stale_selection');assert.equal(await admissionCount(),2);const next=await issueGuest({...request,expectedTariffRevision:2});assert.equal(next.status,'lab_lease');guestCurrentToken=next.leaseToken;});
+ await vtest('V06 stale quote rejects acknowledgement even with prior receipt',async()=>{assert.equal((await acknowledge()).reason,'stale_selection');assert.equal(await consentCount(),2);});
  await test('B12 rollback failed persistence leaves no new quote',async()=>{const before=await scalar(admin,'select count(*) from j06_private.quotes');const broken=async()=>{const c=await adapter();return {...c,query:async(q,a)=>{const r=await c.query(q,a);if(q.startsWith('select j06_private.persist_quote'))throw Error('injected after insert');return r;}}};assert.equal((await persistLabQuote({...delivery,expectedTariffRevision:2},broken)).reason,'calculation_unavailable');assert.equal(await scalar(admin,'select count(*) from j06_private.quotes'),before);});
  await test('B13 withdrawal terminal; history retained',async()=>{assert.equal(await decide(revoker,t2,'withdrawn'),true);assert.equal(await decide(approver,t2,'approved'),false);assert.equal((await calc({...request,expectedTariffRevision:2})).reason,'tariff_unavailable');assert.equal(Number(await scalar(admin,'select count(*) from j06_private.quotes')),3);});
  await ctest('C07 revoked tariff invalidates current lease',async()=>{const a=await leaseCall('revalidate',{leaseToken:lease.leaseToken});assert.equal(a.status,409);assert.equal(a.body.reason,'tariff_unavailable');});
@@ -154,6 +205,8 @@ try{
  await test('B16 database failure and wrong identity fail closed',async()=>{assert.equal((await persistLabQuote(request,async()=>{throw Error('private');})).reason,'calculation_unavailable');const wrong=async()=>{const c=await login('j03_reader');return {query:(q,a)=>c.query(q,a),close:()=>close(c)};};assert.equal((await persistLabQuote(request,wrong)).reason,'calculation_unavailable');});
  await ctest('C08 restart retains lease history, not authority',async()=>{assert.equal(Number(await scalar(admin,'select count(*) from j06_private.leases')),6);listener=await startQuoteHttpLab(adapter);const a=await leaseCall('revalidate',{leaseToken:lease.leaseToken});assert.equal(a.status,409);assert.equal(a.body.reason,'industrial_unavailable');});
  await gtest('G08 restart preserves receipts and withdrawn industry rejects lease',async()=>{assert.equal(await admissionCount(),2);assert.equal((await admit(guestCurrentToken)).reason,'industrial_unavailable');});
+ await vtest('V07 restart retains evidence but no order authority',async()=>{assert.equal(await consentCount(),2);assert.equal((await acknowledge()).reason,'industrial_unavailable');});
+ assert.equal(vPassed,7);console.log('J07_VISUAL_RESULT '+JSON.stringify({passed:vPassed,failed:0,notRun:0}));
  assert.equal(hPassed,5);console.log('J07_SESSION_RESULT '+JSON.stringify({passed:hPassed,failed:0,notRun:0}));
  assert.equal(gPassed,8);console.log('J07_D1B_RESULT '+JSON.stringify({passed:gPassed,failed:0,notRun:0}));
  assert.equal(cPassed,8);console.log('J06_C_RESULT '+JSON.stringify({passed:cPassed,failed:0,notRun:0}));
