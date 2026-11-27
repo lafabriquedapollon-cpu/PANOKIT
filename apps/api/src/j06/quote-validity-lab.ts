@@ -5,7 +5,7 @@ import type {QuoteLabConnection} from "./quote-pg-lab";
 type Quote=Extract<QuoteResult,{status:"lab_quote"}>["quote"];
 type LeaseFailure=Extract<QuoteResult,{status:"unavailable"}>|{status:"unavailable";reason:"lease_unavailable"};
 export type LeaseResult=LeaseFailure|{status:"lab_lease";scope:"LAB";orderable:false;leaseToken:string;expiresAt:string;quote:Quote}|{status:"lab_valid";scope:"LAB";orderable:false;expiresAt:string;quote:Quote};
-export type GuestAdmissionResult=LeaseFailure|{status:"unavailable";reason:"contact_invalid";fields:readonly GuestField[]}|{status:"unavailable";reason:"lease_consumed"}|{status:"lab_guest_admitted";scope:"LAB";orderable:false;receiptId:string};
+export type GuestAdmissionResult=LeaseFailure|{status:"unavailable";reason:"contact_invalid";fields:readonly GuestField[]}|{status:"unavailable";reason:"admission_unavailable"}|{status:"lab_guest_admitted";scope:"LAB";orderable:false;receiptId:string};
 type Client=Awaited<ReturnType<QuoteLabConnection>>;
 const fail=(reason:"calculation_unavailable"|"lease_unavailable"):LeaseFailure=>({status:"unavailable",reason});
 const hash=(token:string)=>createHash("sha256").update(token,"utf8").digest("hex");
@@ -70,7 +70,7 @@ export async function admitLabGuest(input:unknown,connect:QuoteLabConnection):Pr
   const receiptId=randomUUID();
   const saved=await c.query("select j06_private.record_guest_admission($1,$2,$3::uuid) as saved",[tokenHash,lease.quote.fingerprint,receiptId]);
   if(saved.rows.length!==1)throw Error("ADMISSION");
-  if(saved.rows[0].saved!==true)return {status:"unavailable",reason:"lease_consumed"};
+  if(saved.rows[0].saved!==true)return {status:"unavailable",reason:"admission_unavailable"};
   return {status:"lab_guest_admitted",scope:"LAB",orderable:false,receiptId};
  });
 }
