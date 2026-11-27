@@ -313,7 +313,7 @@ export default function HomePage({language = "fr"}: {language?: "fr" | "ar"}) {
           />
         )}
         <p className="eyebrow"><span className="eyebrow-line" /> {t("SIGNALÉTIQUE & COMMUNICATION VISUELLE", "اللافتات والتواصل البصري")}</p>
-        <h1 id="home-title">{rtl ? <>لم يكن الحصول على لافتتك<br /> <strong>بهذه السهولة من قبل.</strong></> : <>Avoir son enseigne n&apos;a<span className="mobile-headline-break"><br /></span> jamais<br className="headline-break" /> <strong>été aussi simple.</strong></>}</h1>
+        <h1 id="home-title">{rtl ? <>لوحتك الإعلانية،<br /> <strong>بكل سهولة.</strong></> : <>Avoir son enseigne n&apos;a<span className="mobile-headline-break"><br /></span> jamais<br className="headline-break" /> <strong>été aussi simple.</strong></>}</h1>
         <div className="headline-stroke" aria-hidden="true" />
         <a className="mobile-hero-action" href="#familles">
           {t("Voir les produits", "اكتشف المنتجات")} <ArrowDown size={17} aria-hidden="true" />
@@ -321,7 +321,6 @@ export default function HomePage({language = "fr"}: {language?: "fr" | "ar"}) {
       </section>
 
       <section className="category-section" id="familles" aria-label={t("Nos familles de produits", "فئات المنتجات")}>
-        {rtl && <p className="home-catalogue-language">الكتالوج الحالي متاح بالفرنسية.</p>}
         <div className="category-grid">
           {families.map((family) => {
             const isExpanded = expanded === family.id;
@@ -363,7 +362,7 @@ export default function HomePage({language = "fr"}: {language?: "fr" | "ar"}) {
                   {family.options.map((option, index) => (
                     <a
                       key={option}
-                      href={`/catalogue/${family.id}?categorie=${encodeURIComponent(option.toLowerCase().replaceAll(" ", "-"))}`}
+                      href={`/catalogue/${family.id}?categorie=${encodeURIComponent(option.toLowerCase().replaceAll(" ", "-"))}${rtl ? "&lang=ar" : ""}`}
                       className="family-option"
                     >
                       {rtl ? arFamilies[family.id].options[index] : option} <ArrowRight size={14} aria-hidden="true" />

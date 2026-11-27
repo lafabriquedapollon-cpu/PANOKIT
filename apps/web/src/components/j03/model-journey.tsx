@@ -29,7 +29,7 @@ export function ModelJourney({ model, locale }: { model: J03Model; locale: Catal
       <CatalogueHeader locale={locale}/>
       <main className="j03-main j03-journey" lang={locale} dir={locale === "ar" ? "rtl" : "ltr"}>
         <nav className="j03-crumb" aria-label={locale === "fr" ? "Fil d’Ariane" : "مسار التصفح"}>
-          <Link href="/">{t.home}</Link><ChevronRight size={14} aria-hidden="true"/>
+          <Link href={locale === "ar" ? "/ar" : "/"}>{t.home}</Link><ChevronRight size={14} aria-hidden="true"/>
           <Link href={`/catalogue/enseignes?lang=${locale}`}>{t.family}</Link><ChevronRight size={14} aria-hidden="true"/>
           <Link href={`/catalogue/enseignes/lumineuses?lang=${locale}`}>{t.luminous}</Link><ChevronRight size={14} aria-hidden="true"/>
           <span aria-current="page">{j03ModelName(model, locale)}</span>

@@ -27,7 +27,7 @@ export default async function CatalogueFamilyPage({ params, searchParams }: {
       <CatalogueHeader locale={locale}/>
       <main className="j03-main j03-family" dir={locale === "ar" ? "rtl" : "ltr"} lang={locale}>
         <nav className="j03-crumb" aria-label={locale === "ar" ? "مسار التصفح" : "Fil d’Ariane"}>
-          <Link href="/">{t.home}</Link><ChevronRight size={14} aria-hidden="true" />
+          <Link href={locale === "ar" ? "/ar" : "/"}>{t.home}</Link><ChevronRight size={14} aria-hidden="true" />
           <span aria-current="page">{familyTitle ?? t.familyUnknown}</span>
         </nav>
         <div className="j03-heading">
