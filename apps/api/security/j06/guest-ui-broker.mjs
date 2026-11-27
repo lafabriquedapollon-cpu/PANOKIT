@@ -67,8 +67,9 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
    if(session?.busy){unavailable(res);return;}
    if(session)session.busy=true;
    try{
-    let size=0;const chunks=[];for await(const part of req){size+=part.length;if(size>4096){unavailable(res,413);return;}chunks.push(part);}
+    let size=0;const chunks=[];for await(const part of req){size+=part.length;if(size>(upstream?2_800_000:4096)){unavailable(res,413);return;}chunks.push(part);}
     let body;try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{unavailable(res,400);return;}
+    if(size>4096&&(!upstream||body?.action!=='issue')){unavailable(res,413);return;}
     if(exact(body,['action'])&&body.action==='reset'&&upstream){
      if(session)sessions.delete(session.id);
      const next=fresh();if(!next){unavailable(res,503);return;}
@@ -77,7 +78,7 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
     if(!live(session)){unavailable(res,403);return;}
     if(exact(body,upstream?['action','mode','configuration']:['action','mode'])&&body.action==='issue'&&['pickup','delivery'].includes(body.mode)&&session.stage==='new'){
      if(upstream){
-      const svg=renderVisual(body.configuration);
+      const svg=await renderVisual(body.configuration);
       if(typeof svg!=='string'||Buffer.byteLength(svg)>2_000_000){send(res,422,{state:'visual_unavailable',orderable:false});return;}
       session.visualBytes=Buffer.from(svg,'utf8');session.visualDigest=digest(session.visualBytes);session.visualVersion='lab-config-v1';
      }
@@ -98,7 +99,7 @@ export async function startGuestUiLab({domain,connect,fixture,preview,ttlMs=9000
      const version=upstream?session.visualVersion:visualVersion,hash=upstream?session.visualDigest:visualDigest;
      const input={leaseToken:session.lease,receiptId:session.receipt,visualVersion:version,visualDigest:hash,statementVersion,locale:session.locale,accepted:true};
      const manifest={receiptId:session.receipt,fingerprint:session.fingerprint,visualVersion:version,visualDigest:hash};
-     const result=await domain.acknowledgeLabVisual(input,session.cap,manifest,connect);
+     const result=await domain.acknowledgeLabVisual(input,session.cap,manifest,connect,upstream?session.visualBytes:undefined);
      session.stage='closed';
      if(result.status!=='lab_visual_acknowledged'||result.orderable!==false||!live(session)){unavailable(res);return;}
      if(upstream)session.stage='acknowledged';send(res,200,{state:'acknowledged',orderable:false});return;
