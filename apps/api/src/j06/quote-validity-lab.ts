@@ -94,20 +94,22 @@ function exactData(v:unknown,keys:readonly string[]):v is Record<string,unknown>
 }
 const receipt=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
 const visualVersion=(v:unknown):v is string=>typeof v==="string"&&/^lab-[a-z0-9-]{1,59}$/.test(v);
-export async function acknowledgeLabVisual(input:unknown,sessionToken:unknown,trustedManifest:unknown,connect:QuoteLabConnection):Promise<VisualConsentResult>{
+export async function acknowledgeLabVisual(input:unknown,sessionToken:unknown,trustedManifest:unknown,connect:QuoteLabConnection,archiveBytes?:Buffer):Promise<VisualConsentResult>{
  if(!capability(sessionToken)||!exactData(input,["leaseToken","receiptId","visualVersion","visualDigest","statementVersion","locale","accepted"])||
  !capability(input.leaseToken)||!receipt(input.receiptId)||!visualVersion(input.visualVersion)||!capability(input.visualDigest)||
  input.statementVersion!=="lab-visual-v1"||(input.locale!=="fr"&&input.locale!=="ar")||input.accepted!==true)return {status:"unavailable",reason:"invalid_request"};
  if(!exactData(trustedManifest,["receiptId","fingerprint","visualVersion","visualDigest"])||
  !receipt(trustedManifest.receiptId)||!capability(trustedManifest.fingerprint)||!visualVersion(trustedManifest.visualVersion)||!capability(trustedManifest.visualDigest))return {status:"unavailable",reason:"visual_mismatch"};
  const {leaseToken,receiptId,visualVersion:version,visualDigest,locale}=input;
+ const archive=Buffer.isBuffer(archiveBytes)?Buffer.from(archiveBytes):null;
+ if(version==="lab-config-v1"?(!archive||archive.length===0||archive.length>2000000||createHash("sha256").update(archive).digest("hex")!==visualDigest):archiveBytes!==undefined)return {status:"unavailable",reason:"visual_mismatch"};
  if(leaseToken===sessionToken)return fail("lease_unavailable");
  const tokenHash=hash(leaseToken),sessionHash=hash(sessionToken);
  return transaction<VisualConsentResult>(connect,async c=>{
   const lease=await readValidLease(c,tokenHash,sessionHash);
   if(lease.status==="unavailable")return lease;
   if(trustedManifest.receiptId!==receiptId||trustedManifest.fingerprint!==lease.quote.fingerprint||trustedManifest.visualVersion!==version||trustedManifest.visualDigest!==visualDigest)return {status:"unavailable",reason:"visual_mismatch"};
-  const saved=await c.query("select j06_private.record_guest_visual_consent($1,$2,$3::uuid,$4,$5,$6,$7) as saved",[tokenHash,sessionHash,receiptId,lease.quote.fingerprint,version,visualDigest,locale]);
+  const saved=await c.query("select j06_private.record_guest_visual_consent($1,$2,$3::uuid,$4,$5,$6,$7,$8::bytea) as saved",[tokenHash,sessionHash,receiptId,lease.quote.fingerprint,version,visualDigest,locale,archive]);
   if(saved.rows.length!==1)throw Error("CONSENT");
   if(saved.rows[0].saved!==true)return {status:"unavailable",reason:"consent_unavailable"};
   return {status:"lab_visual_acknowledged",scope:"LAB",orderable:false,receiptId,visualVersion:version,visualDigest,statementVersion:"lab-visual-v1"};
