@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync,readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
 import {join} from 'node:path';
 import {startGuestUiLab} from './guest-ui-broker.mjs';
 export async function runGuestReactLab({browser,domain,connect,fixture,preview,admin,out}){
- const lab=await startGuestUiLab({domain,connect,fixture,preview,reactLabOrigin:process.env.J07_REACT_ORIGIN});
+ const require=createRequire(import.meta.url);
+ const {renderConfiguredLabVisual}=require(process.env.J07_RENDERER);
+ const masters={jour:'data:image/svg+xml;base64,'+Buffer.from(preview).toString('base64'),nuit:'data:image/svg+xml;base64,'+readFileSync(process.env.J07_MASTER_NIGHT).toString('base64')};
+ const renderVisual=config=>renderConfiguredLabVisual(config,masters);
+ const lab=await startGuestUiLab({domain,connect,fixture,preview,reactLabOrigin:process.env.J07_REACT_ORIGIN,renderVisual});
  const contexts=[],checks=[],captures=[];
  const check=(name,ok)=>{checks.push({name,pass:!!ok});assert.ok(ok,name);};
  const state=(p,value)=>p.locator('[data-testid=j07-lab][data-stage='+value+']').waitFor();
@@ -12,6 +18,18 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
  const count=async()=>Number((await admin.query('select count(*)::int as n from j06_private.guest_admissions')).rows[0].n);
  const consentCount=async()=>Number((await admin.query('select count(*)::int as n from j06_private.guest_visual_consents')).rows[0].n);
  const before=await count(),consentsBefore=await consentCount();
+ const manifestBytes=async(p,svg)=>{
+  const result=await p.evaluate(async original=>{
+   const r=await fetch('/preview.svg'),server=await r.text();
+   const doc=new DOMParser().parseFromString(server,'image/svg+xml');
+   const src=new DOMParser().parseFromString(original,'text/html').querySelector('svg');
+   const canon=node=>node?{tag:node.localName,attrs:[...node.attributes].filter(a=>a.name!=='xmlns').map(a=>[a.name,a.value]).sort((a,b)=>a[0].localeCompare(b[0])),children:[...node.childNodes].filter(n=>n.nodeType===1||n.nodeType===3).map(n=>n.nodeType===3?n.textContent:canon(n))}:null;
+   return {status:r.status,server,same:JSON.stringify(canon(doc.documentElement))===JSON.stringify(canon(src))};
+  },svg);
+  assert.equal(result.status,200);return {same:result.same,hash:createHash('sha256').update(result.server).digest('hex')};
+ };
+ const lastHash=async()=>String((await admin.query("select visual_digest from j06_private.guest_visual_consents order by recorded_at desc limit 1")).rows[0].visual_digest);
+ const visualReady=async(p)=>{await p.getByTestId('j07-server-visual').waitFor();await p.waitForFunction(()=>{const x=document.querySelector('[data-testid=j07-server-visual]');return x?.complete&&x.naturalWidth>0&&!document.querySelector('[data-main-action]')?.disabled;});};
  async function capture(p,key,stage){
   await state(p,stage);await p.evaluate(()=>document.fonts.ready);
   const file='j07-react-'+key+'-'+stage+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});captures.push(file);
@@ -46,6 +64,14 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
   if(mode==='delivery'){await p.locator('#j07-city').fill('Ville Test');await p.locator('#j07-address').fill('12 rue Exemple');}
  }
  try{
+  const base={data:{name:'LAB DEMO',activity:'',phone:'',slogan:'',logo:null},template:1,view:'plat',palette:{board:'#204947',night:'#16413e',lettering:'#fff9ef',accent:'#f49b48'},lang:'fr',defaultBoard:true};
+  check('renderer/flat',renderVisual(base)?.includes('LAB DEMO'));
+  check('renderer/day-embedded',renderVisual({...base,view:'jour'})?.includes(masters.jour));
+  check('renderer/night-embedded',renderVisual({...base,view:'nuit'})?.includes(masters.nuit));
+  check('renderer/deny-logo',renderVisual({...base,data:{...base.data,logo:'data:image/png;base64,AA=='}})===null);
+  check('renderer/deny-href',renderVisual({...base,href:'https://example.invalid'})===null);
+  check('renderer/escaped-text',!renderVisual({...base,data:{...base.data,name:'<script>test</script>'}})?.includes('<script>'));
+  check('renderer/deny-adaptation',renderVisual({...base,data:{...base.data,name:'a'.repeat(50)}})===null);
   const fr=await setup('fr',1440),p=fr.p;
   await select(p,'pickup');check('fr/pickup-fields',await p.locator('#j07-city,#j07-address').count()===0);check('fr/server-total',(await amount(p)).replace(/\s/g,'')==='1,26MAD');
   await layout(p,'fr-1440');await capture(p,'fr-1440','coordinates');
@@ -59,16 +85,19 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
   check('fr/stale-no-amount',await p.locator('[data-amount]').count()===0);check('fr/stale-no-write',await count()===before);await capture(p,'fr-1440','stale');
   await mainAction(p).click();await state(p,'coordinates');check('fr/recalculated',(await amount(p)).replace(/\s/g,'')==='1,26MAD');
   await contact(p,'pickup');await mainAction(p).click();await state(p,'review');
-  check('fr/contact-durable',await count()===before+1);check('fr/review-gate',await mainAction(p).isDisabled());check('fr/preview-still-exact',await p.getByTestId('j07-preview').locator('svg').evaluate(x=>x.outerHTML)===fr.svg);
+  check('fr/contact-durable',await count()===before+1);await visualReady(p);const frProof=await manifestBytes(p,fr.svg);check('fr/server-render-equals-studio',frProof.same);
   check('fr/no-pii-in-url-storage',await p.evaluate(()=>!location.href.includes('Client')&&!location.href.includes('0600000000')&&localStorage.length===0&&sessionStorage.length===0));
-  await capture(p,'fr-1440','review');
+  await capture(p,'fr-1440','review');await mainAction(p).click();await state(p,'acknowledged');check('fr/consent-durable',await consentCount()===consentsBefore+1);check('fr/consent-exact-bytes',await lastHash()===frProof.hash);await capture(p,'fr-1440','acknowledged');
   const ar=await setup('ar',390),q=ar.p;
   await select(q,'delivery');check('ar/delivery-fields',await q.locator('#j07-city[required],#j07-address[required]').count()===2);check('ar/server-total',(await amount(q)).replace(/\s/g,'')==='1,35MAD');
   await layout(q,'ar-390');await capture(q,'ar-390','coordinates');
   await contact(q,'delivery');await q.locator('#j07-phone').fill('٠٦٠٠٠٠٠٠٠٠');await mainAction(q).click();await state(q,'review');
-  check('ar/contact-durable',await count()===before+2);check('ar/review-gate',await mainAction(q).isDisabled());check('ar/preview-still-exact',await q.getByTestId('j07-preview').locator('svg').evaluate(x=>x.outerHTML)===ar.svg);
-  await capture(q,'ar-390','review');check('no-consent-mismatched-master',await consentCount()===consentsBefore);
-  const route=await q.evaluate(async()=>{const r=await fetch('/preview.svg');return r.status;});check('fixed-master-denied',route===403);
-  check('six-captures',captures.length===6);
+  check('ar/contact-durable',await count()===before+2);await visualReady(q);const arProof=await manifestBytes(q,ar.svg);check('ar/server-render-equals-studio',arProof.same);check('ar/distinct-visual',arProof.hash!==frProof.hash);
+  await capture(q,'ar-390','review');
+  const forged=await q.evaluate(async()=>{const r=await fetch('/action',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'visual',accepted:true,visualVersion:'lab-config-v1',visualDigest:'0'.repeat(64),statementVersion:'lab-visual-v1'})});return r.status;});
+  check('ar/forged-digest-denied',forged===400);check('no-forged-consent',await consentCount()===consentsBefore+1);
+  await mainAction(q).click();await state(q,'acknowledged');check('ar/consent-durable',await consentCount()===consentsBefore+2);check('ar/consent-exact-bytes',await lastHash()===arProof.hash);await capture(q,'ar-390','acknowledged');
+  const c=await browser.newContext();contexts.push(c);const z=await c.newPage();await z.goto(lab.origin+'/j07-lab');const route=await z.evaluate(async()=>{const r=await fetch('/preview.svg');return r.status;});check('foreign-preview-denied',route===403);
+  check('eight-captures',captures.length===8);
  }finally{for(const ctx of contexts)await ctx.close();await lab.close();writeFileSync(join(out,'j07-react-report.json'),JSON.stringify({checks,captures},null,2));console.log('J07_REACT_RESULT '+JSON.stringify({passed:checks.filter(x=>x.pass).length,total:checks.length,captures:captures.length}));}
 }
