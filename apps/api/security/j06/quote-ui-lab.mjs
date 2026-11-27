@@ -44,7 +44,7 @@ try{
  await scalar(ie,'select j03_private.save_draft($1,$2,$3,$4)',[industrial.formatId,0,JSON.stringify(industrial),digest]);
  await scalar(ia,'select j03_private.record_decision($1,$2,$3,$4)',[industrial.formatId,1,digest,'approved']);
  await save(editor,t1);await decide(approver,t1,'approved');
- const css=readFileSync(process.env.J06_CSS,'utf8')+'\n.figure img{display:block;width:100%;height:auto}.choice{text-align:start;font:inherit;cursor:pointer}.choice[aria-pressed=true]{border-color:#b64709;background:#fff4e5;color:#292725}.choice[aria-pressed=true] .radio{border:5px solid #b64709}.labControls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.labControls button{border:1px solid #ded8ce;background:#fff;color:#9a3e0b;min-height:44px;border-radius:7px;padding:8px;font:inherit;font-size:12px}.page a:focus-visible,.page button:focus-visible{outline:3px solid #b64709;outline-offset:2px}.page h1,.page h2{font-family:inherit}.page button{box-sizing:border-box}body{margin:0}';
+ const css=readFileSync(process.env.J06_CSS,'utf8')+'\n.figure img{display:block;width:100%;height:auto}.choice{text-align:start;font:inherit;cursor:pointer}.choice[aria-pressed=true]{border-color:#b64709;background:#fff4e5;color:#292725}.choice[aria-pressed=true] .radio{border:5px solid #b64709}.labControls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.labControls button{border:1px solid #ded8ce;background:#fff;color:#9a3e0b;min-height:44px;border-radius:7px;padding:8px;font:inherit;font-size:12px}.page a:focus-visible,.page button:focus-visible{outline:3px solid #b64709;outline-offset:2px}.page h1,.page h2{font-family:inherit}.page button{box-sizing:border-box}.page .action:not(:disabled){background:#b64709;color:#fff;cursor:pointer}.page .action:not(:disabled):hover{background:#963908}.page .action:disabled{cursor:not-allowed}.page #lab-status:focus-visible{outline:3px solid #b64709;outline-offset:2px}body{margin:0}';
  const out=process.env.J06_UI_EVIDENCE;mkdirSync(out,{recursive:true});
  ui=await startPriceUiLab({api:listener,fixture:request,css,master:readFileSync(process.env.J06_MASTER),clientSource:readFileSync(new URL('./quote-ui-client.js',import.meta.url),'utf8'),delayPickup:500});
  browser=await chromium.launch({headless:true});
@@ -53,9 +53,10 @@ try{
  const wait=(p,state)=>p.locator('#app[data-state='+state+']').waitFor({state:'visible'});
  const capture=async(p,key,state)=>{
   await wait(p,state);await p.evaluate(()=>document.fonts.ready);
-  const m=await p.evaluate(()=>({w:innerWidth,scroll:document.documentElement.scrollWidth,actions:[...document.querySelectorAll('[data-main-action]')].filter(x=>x.getBoundingClientRect().height>0).map(x=>({bottom:x.getBoundingClientRect().bottom,height:x.getBoundingClientRect().height,disabled:x.disabled})),total:document.querySelector('[data-total]').textContent,mobile:document.querySelector('[data-total-mobile]').textContent}));
+  const m=await p.evaluate(()=>({w:innerWidth,scroll:document.documentElement.scrollWidth,actions:[...document.querySelectorAll('[data-main-action]')].filter(x=>x.getBoundingClientRect().height>0).map(x=>({bottom:x.getBoundingClientRect().bottom,height:x.getBoundingClientRect().height,disabled:x.disabled,bg:getComputedStyle(x).backgroundColor,fg:getComputedStyle(x).color})),total:document.querySelector('[data-total]').textContent,mobile:document.querySelector('[data-total-mobile]').textContent}));
   check(key+'/'+state+'/reflow',m.scroll<=m.w+1);check(key+'/'+state+'/one-action',m.actions.length===1&&m.actions[0].height>=44);if(m.w<=760)check(key+'/'+state+'/first-viewport',m.actions[0].bottom<=844&&m.mobile===m.total);
   const priced=['pickup','delivery'].includes(state);check(key+'/'+state+'/amount',priced?m.total===(state==='pickup'?'1.26 MAD':'1.35 MAD'):!m.total.includes('MAD'));check(key+'/'+state+'/action',m.actions[0].disabled===!['pickup','delivery','stale','unavailable'].includes(state));
+  check(key+'/'+state+'/action-visual',m.actions[0].bg===(m.actions[0].disabled?'rgb(233, 229, 223)':'rgb(182, 71, 9)')&&(m.actions[0].disabled||m.actions[0].fg==='rgb(255, 255, 255)'));
   const file=key+'-'+state+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});report.captures.push(file);
  };
  try{
@@ -64,11 +65,11 @@ try{
   const responses=[];p.on('response',r=>{if(r.url().endsWith('/action'))responses.push(r);});
   await p.goto(ui.origin+'/?lang='+lang);check(key+'/locale',await p.locator('html').getAttribute('dir')===(lang==='ar'?'rtl':'ltr'));await capture(p,key,'example');
   await p.locator('[data-action=blocked]').click();await capture(p,key,'blocked');
-  await p.locator('[data-action=pickup]').click();await capture(p,key,'loading');await capture(p,key,'pickup');
+  await p.locator('[data-action=pickup]').focus();await p.keyboard.press('Enter');await capture(p,key,'loading');await capture(p,key,'pickup');check(key+'/keyboard-focus',await p.evaluate(()=>document.activeElement?.getAttribute('data-action'))==='pickup');
   await p.locator('[data-action=outside]').click();await capture(p,key,'outside');
   await p.locator('[data-action=pickup]').click();await wait(p,'loading');await p.locator('[data-action=delivery]').click();await capture(p,key,'delivery');
   await p.waitForTimeout(650);check(key+'/race',await p.locator('#app').getAttribute('data-state')==='delivery');
-  await p.locator('[data-main-action]:visible').click();await wait(p,'delivery');check(key+'/revalidated',await p.locator('[role=status]').innerText()!=='');
+  await p.locator('[data-main-action]:visible').click();await wait(p,'delivery');check(key+'/revalidated',await p.locator('[role=status]').innerText()===(lang==='ar'?'تمت مراجعة العرض التجريبي · لا طلب':'Devis LAB revalidé · aucune commande'));check(key+'/main-focus',await p.evaluate(()=>document.activeElement?.hasAttribute('data-main-action'))===true);
   for(const resp of responses){const body=await resp.text();check(key+'/no-secret',!body.includes(listener.token)&&!body.includes('leaseToken')&&!body.includes('fingerprint')&&!body.includes('industrialDigest'));}
  }
  await save(editor,t2);await decide(approver,t2,'approved');
