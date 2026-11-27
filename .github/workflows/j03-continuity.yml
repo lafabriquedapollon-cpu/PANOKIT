@@ -1,7 +1,7 @@
 name: J03 existing catalogue qualification (no deploy)
 on:
   push:
-    branches: [feature/j03-continuity-20261127]
+    branches: [feature/j03-continuity-20261127, main, quality/main-ci-20261127]
   pull_request:
     branches: [feature/j02-locale-20261127, main]
 permissions:
@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: "24.13.1"
       - name: Exact source boundary
-        if: github.event_name != 'pull_request' || github.head_ref != 'feature/j05-r2-p0-20261127'
+        if: (github.event_name == 'push' && github.ref_name != 'main' && github.ref_name != 'quality/main-ci-20261127') || (github.event_name == 'pull_request' && github.base_ref != 'main')
         run: |
           set -euo pipefail
           git merge-base --is-ancestor 2387d6da4ba889660414135b429b74cbbe65a7c2 HEAD
@@ -36,6 +36,23 @@ jobs:
           git merge-base --is-ancestor 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD
           git diff --exit-code 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD -- apps/web apps/api packages pnpm-lock.yaml
           test "$(git diff --name-only 626b7e50ca04a2d21a9309dd4be0df48675fd818 HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j02-bilingual.yml .github/workflows/j03-continuity.yml .github/workflows/j03-fue.yml .github/workflows/j03-industrial.yml .github/workflows/j03-pg.yml .github/workflows/j05-restored-fue.yml | LC_ALL=C sort)"
+      - name: Verify integrated main provenance and CI-only scope
+        if: (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'quality/main-ci-20261127')) || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref != 'feature/j05-r2-p0-20261127')
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+          PUSH_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 63975ae83e82cf160a4e5361804fa5a7c01d3977 HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            test -n "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" HEAD
+          fi
+          if [ "$PR_HEAD_REF" = "quality/main-ci-20261127" ] || { [ "$GITHUB_EVENT_NAME" = push ] && [ "$PUSH_REF" = "quality/main-ci-20261127" ]; }; then
+            test "$(git diff --name-only 63975ae83e82cf160a4e5361804fa5a7c01d3977 HEAD | LC_ALL=C sort)" = "$(printf '%s\n' .github/workflows/j02-bilingual.yml .github/workflows/j03-continuity.yml .github/workflows/j03-fue.yml .github/workflows/j03-industrial.yml .github/workflows/j03-pg.yml .github/workflows/j05-restored-fue.yml .github/workflows/recovery-product-ci.yml | LC_ALL=C sort)"
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
