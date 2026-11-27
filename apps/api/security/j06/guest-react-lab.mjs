@@ -136,7 +136,7 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
    audit(key+'/'+screen+'/labels-targets',m.fields.every(f=>f.label&&f.described&&f.height>=44));
    if(m.width<=760&&(screen==='pickup'||screen==='delivery'||screen==='error')){audit(key+'/'+screen+'/mobile-total',m.mobile===m.total);audit(key+'/'+screen+'/form-before-detail',m.action.bottom<=m.preview.top+1);}
    if(screen==='stale')audit(key+'/stale/no-amount',m.amounts===0);
-   if(screen==='review'||screen==='acknowledged')audit(key+'/'+screen+'/visual-first',m.image>0&&m.preview.bottom<=m.action.top+1);
+   if(screen==='review'||screen==='acknowledged'){audit(key+'/'+screen+'/visual-first',m.image>0&&m.preview.bottom<=m.action.top+1);audit(key+'/'+screen+'/reviewed-quote',m.amounts===6&&m.total?.replace(/\s/g,'')==='1,35MAD');}
    const file='j07-d2-'+key+'-'+screen+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});matrix.captures.push(file);
   }
   try{
