@@ -1,9 +1,11 @@
-import {createHash,randomBytes} from "node:crypto";
+import {createHash,randomBytes,randomUUID} from "node:crypto";
 import {calculateLabQuote,type QuoteResult,type QuoteLabPort} from "./quote-lab";
+import {validateGuestContact,type GuestField} from "../j07/guest-contact";
 import type {QuoteLabConnection} from "./quote-pg-lab";
 type Quote=Extract<QuoteResult,{status:"lab_quote"}>["quote"];
 type LeaseFailure=Extract<QuoteResult,{status:"unavailable"}>|{status:"unavailable";reason:"lease_unavailable"};
 export type LeaseResult=LeaseFailure|{status:"lab_lease";scope:"LAB";orderable:false;leaseToken:string;expiresAt:string;quote:Quote}|{status:"lab_valid";scope:"LAB";orderable:false;expiresAt:string;quote:Quote};
+export type GuestAdmissionResult=LeaseFailure|{status:"unavailable";reason:"contact_invalid";fields:readonly GuestField[]}|{status:"unavailable";reason:"lease_consumed"}|{status:"lab_guest_admitted";scope:"LAB";orderable:false;receiptId:string};
 type Client=Awaited<ReturnType<QuoteLabConnection>>;
 const fail=(reason:"calculation_unavailable"|"lease_unavailable"):LeaseFailure=>({status:"unavailable",reason});
 const hash=(token:string)=>createHash("sha256").update(token,"utf8").digest("hex");
@@ -11,7 +13,7 @@ function port(c:Client):QuoteLabPort{return {readSnapshot:async s=>{
  const r=await c.query("select j06_private.read_snapshot($1,$2) as snapshot",[s.formatId,s.fulfillment.mode==="delivery"?s.fulfillment.destinationRef:null]);
  if(r.rows.length!==1)throw Error("SNAPSHOT");return r.rows[0].snapshot;
 }};}
-async function transaction(connect:QuoteLabConnection,fn:(c:Client)=>Promise<LeaseResult>):Promise<LeaseResult>{
+async function transaction<T extends LeaseResult|GuestAdmissionResult>(connect:QuoteLabConnection,fn:(c:Client)=>Promise<T>):Promise<T|LeaseFailure>{
  let c:Client|undefined,started=false;
  try{
   c=await connect();const r=await c.query("select session_user::text as login,current_user::text as role,current_database() as db");
@@ -24,7 +26,7 @@ async function transaction(connect:QuoteLabConnection,fn:(c:Client)=>Promise<Lea
 }
 function iso(v:unknown):string{const d=v instanceof Date?v:typeof v==="string"?new Date(v):null;if(!d||!Number.isFinite(d.getTime()))throw Error("EXPIRY");return d.toISOString();}
 export async function issueLabLease(input:unknown,connect:QuoteLabConnection):Promise<LeaseResult>{
- return transaction(connect,async c=>{
+ return transaction<LeaseResult>(connect,async c=>{
   const result=await calculateLabQuote(input,port(c));if(result.status!=="lab_quote")return result;
   const saved=await c.query("select j06_private.persist_quote($1::jsonb) as saved",[JSON.stringify(result.quote)]);
   if(saved.rows.length!==1||saved.rows[0].saved!==true)throw Error("PERSIST");
@@ -38,7 +40,9 @@ function record(v:unknown):v is Record<string,unknown>{return !!v&&typeof v==="o
 export async function revalidateLabLease(input:unknown,connect:QuoteLabConnection):Promise<LeaseResult>{
  if(!record(input)||Object.keys(input).length!==1||!Object.hasOwn(input,"leaseToken")||typeof input.leaseToken!=="string"||!/^[a-f0-9]{64}$/.test(input.leaseToken))return {status:"unavailable",reason:"invalid_request"};
  const tokenHash=hash(input.leaseToken);
- return transaction(connect,async c=>{
+ return transaction<LeaseResult>(connect,c=>readValidLease(c,tokenHash));
+}
+async function readValidLease(c:Client,tokenHash:string):Promise<LeaseFailure|Extract<LeaseResult,{status:"lab_valid"}>>{
   const read=async()=>{const r=await c.query("select j06_private.read_lease($1) as lease",[tokenHash]);if(r.rows.length!==1)throw Error("READ_LEASE");return r.rows[0].lease;};
   const lease=await read();
   if(!record(lease)||!record(lease.quote))return fail("lease_unavailable");
@@ -49,5 +53,24 @@ export async function revalidateLabLease(input:unknown,connect:QuoteLabConnectio
   if(fresh.quote.fingerprint!==q.fingerprint)return fail("lease_unavailable");
   const final=await read();if(!record(final)||!record(final.quote)||final.quote.fingerprint!==q.fingerprint||iso(final.expiresAt)!==iso(lease.expiresAt))return fail("lease_unavailable");
   return {status:"lab_valid",scope:"LAB",orderable:false,expiresAt:iso(lease.expiresAt),quote:fresh.quote};
+
+}
+/** Trusted server-side LAB adapter only. Does not prove identity, visual consent or order acceptance.
+ * Contact data is validated in memory and never persisted or returned. One receipt per lease;
+ * a duplicate is rejected (not an idempotent replay of the original response). */
+export async function admitLabGuest(input:unknown,connect:QuoteLabConnection):Promise<GuestAdmissionResult>{
+ if(!record(input)||Reflect.ownKeys(input).length!==2||!["leaseToken","contact"].every(k=>Object.hasOwn(Object.getOwnPropertyDescriptor(input,k)??{},"value"))||
+    typeof input.leaseToken!=="string"||!/^[a-f0-9]{64}$/.test(input.leaseToken))return {status:"unavailable",reason:"invalid_request"};
+ const tokenHash=hash(input.leaseToken);
+ return transaction<GuestAdmissionResult>(connect,async c=>{
+  const lease=await readValidLease(c,tokenHash);
+  if(lease.status==="unavailable")return lease;
+  const contact=validateGuestContact(input.contact,lease.quote.fulfillment.mode);
+  if(contact.status!=="valid")return {status:"unavailable",reason:"contact_invalid",fields:contact.fields};
+  const receiptId=randomUUID();
+  const saved=await c.query("select j06_private.record_guest_admission($1,$2,$3::uuid) as saved",[tokenHash,lease.quote.fingerprint,receiptId]);
+  if(saved.rows.length!==1)throw Error("ADMISSION");
+  if(saved.rows[0].saved!==true)return {status:"unavailable",reason:"lease_consumed"};
+  return {status:"lab_guest_admitted",scope:"LAB",orderable:false,receiptId};
  });
 }
