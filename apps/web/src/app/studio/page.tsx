@@ -46,6 +46,7 @@ const STUDIO_AR: Record<string,string> = {
   "Ivoire": "عاجي",
   "Nom exact de votre établissement": "الاسم الكامل لمؤسستك",
   "Votre nom commercial": "اسم نشاطك التجاري",
+  "Nom à adapter": "اسم يحتاج إلى تعديل",
   "Disposition": "التنسيق",
   "Mode de présentation": "طريقة العرض",
   "Couleur de l'enseigne": "لون اللافتة",
@@ -90,7 +91,8 @@ function Sign({ data, template, view, palette, lang = "fr" }: { data: Document; 
   const hasLogo = Boolean(data.logo);
   const mainX = template === 2 && hasLogo ? 555 : 420;
   const center = template !== 3 || isRtl;
-  const titleY = lines.length === 1 ? 158 : 150 - (lines.length - 2) * 18;
+  const visibleLines = long ? [] : lines;
+  const titleY = visibleLines.length === 1 ? 158 : visibleLines.length === 2 ? 137 : 111;
   const titleSize = lines.length > 2 ? 29 : lines.length > 1 ? 35 : 43;
   const night = view === "nuit";
   const board = night ? palette.night : palette.board;
@@ -104,9 +106,9 @@ function Sign({ data, template, view, palette, lang = "fr" }: { data: Document; 
       {template === 3 && <><path d="M76 83V219" stroke={palette.accent} strokeWidth="7" /><rect x="88" y="90" width="5" height="120" fill={palette.accent} opacity=".35" /></>}
       {template === 4 && <><path d="M120 72H720" stroke={palette.accent} strokeWidth="3" /><path d="M170 225H670" stroke={palette.accent} strokeWidth="2" opacity=".8" /><path d="M120 72V102M720 72V102M170 195V225M670 195V225" stroke={palette.accent} strokeWidth="3" /></>}
       {template === 2 && hasLogo && <><rect x="75" y="75" width="180" height="150" rx="6" fill={palette.night} stroke={palette.accent} strokeWidth="2" /><path d="M268 86V214" stroke={palette.accent} strokeWidth="4" /></>}{template === 2 && !hasLogo && <rect x="325" y="210" width="190" height="5" rx="2" fill={palette.accent} />}{template === 2 && hasLogo && <><rect x="109" y="99" width="112" height="112" rx="10" fill="#fff" /><image href={data.logo!} x="115" y="105" width="100" height="100" preserveAspectRatio="xMidYMid meet" /></>}
-      {lines.length === 0 ? <text x="420" y="154" textAnchor="middle" fontSize="30" fill={palette.lettering}>{lang === "ar" ? "اسم نشاطك التجاري" : "Votre nom commercial"}</text> : (
+      {long ? <text data-studio-name="adapt" x={mainX} y="154" textAnchor="middle" fontSize={template === 2 && hasLogo ? 25 : 30} fill={palette.lettering}>{studioTranslate(lang, "Nom à adapter")}</text> : lines.length === 0 ? <text x="420" y="154" textAnchor="middle" fontSize="30" fill={palette.lettering}>{lang === "ar" ? "اسم نشاطك التجاري" : "Votre nom commercial"}</text> : (
         <g direction={isRtl ? "rtl" : "ltr"} lang={isRtl ? "ar" : "fr"}>
-          {lines.slice(0, 3).map((line, index) => <text key={index} x={template === 3 && !isRtl ? 105 : mainX} y={titleY + index * 39} textAnchor={center ? "middle" : "start"} fontSize={template === 2 && hasLogo ? Math.min(titleSize, 27) : titleSize} fontWeight={isRtl ? "700" : "800"} fontFamily={isRtl ? "Arial, Noto Sans, DejaVu Sans, sans-serif" : "Arial, Helvetica, sans-serif"} fill={palette.lettering} direction={/[\u0600-\u06ff]/u.test(line) ? "rtl" : "ltr"} unicodeBidi="plaintext">{line}</text>)}
+          {visibleLines.map((line, index) => <text data-studio-name="line" key={index} x={template === 3 && !isRtl ? 105 : mainX} y={titleY + index * 39} textAnchor={center ? "middle" : "start"} fontSize={template === 2 && hasLogo ? Math.min(titleSize, 27) : titleSize} fontWeight={isRtl ? "700" : "800"} fontFamily={isRtl ? "Arial, Noto Sans, DejaVu Sans, sans-serif" : "Arial, Helvetica, sans-serif"} fill={palette.lettering} direction={/[\u0600-\u06ff]/u.test(line) ? "rtl" : "ltr"} unicodeBidi="plaintext">{line}</text>)}
         </g>
       )}
       {lines.length <= 2 && data.activity && <text x="420" y="208" fontSize="17" fill={palette.lettering} textAnchor="middle">{data.activity.slice(0, 58)}</text>}
@@ -158,7 +160,7 @@ export default function StudioPage() {
   }
   return (
     <main className="studio-page" lang={lang} dir={lang === "ar" ? "rtl" : "ltr"}>
-      <header className="studio-header"><Link href="/" className="studio-brand">PANOKIT<span className="studio-stroke" /></Link><div className="studio-header-actions"><div className="studio-language" role="group" aria-label="Langue / اللغة"><button type="button" aria-pressed={lang === "fr"} onClick={() => setLang("fr")}>FR</button><button type="button" aria-pressed={lang === "ar"} onClick={() => setLang("ar")}>العربية</button></div><Link href="/catalogue" className="studio-back">{t("← Retour au catalogue")}</Link></div></header>
+      <header className="studio-header"><Link href={lang === "ar" ? "/ar" : "/"} className="studio-brand">PANOKIT<span className="studio-stroke" /></Link><div className="studio-header-actions"><div className="studio-language" role="group" aria-label="Langue / اللغة"><button type="button" aria-pressed={lang === "fr"} onClick={() => setLang("fr")}>FR</button><button type="button" aria-pressed={lang === "ar"} onClick={() => setLang("ar")}>العربية</button></div><Link href={`/catalogue/enseignes/lumineuses?lang=${lang}`} className="studio-back">{t("← Retour au catalogue")}</Link></div></header>
       <div className="studio-shell">
         <div className="studio-heading"><p>{t("CATALOGUE / ENSEIGNE LUMINEUSE / STUDIO")}</p><h1>{t("Imaginez votre enseigne.")}</h1><p>{t("Composez un aperçu indicatif de votre caisson lumineux rectangulaire. Aucun format industriel n’est confirmé.")}</p></div>
         <div className="studio-layout">
