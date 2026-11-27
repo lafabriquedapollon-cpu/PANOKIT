@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import Link from "next/link";
 import "./studio.css";
 import PriceReview from "../prix-livraison/price-review";
+import type { LabReviewProps } from "../../lab/j07/guest-checkout";
 import { splitPreservingText } from "./studio-text";
 
 type StudioLanguage = "fr" | "ar";
@@ -155,7 +156,7 @@ function Sign({data,template,view,palette,lang,thumb=false,defaultBoard=false}: 
   </svg>;
 }
 
-export default function StudioClient({initialLang="fr"}:{initialLang?:StudioLanguage}) {
+export default function StudioClient({initialLang="fr",labReview:LabReview}:{initialLang?:StudioLanguage;labReview?:ComponentType<LabReviewProps>}) {
   const [lang,setLang]=useState<StudioLanguage>(initialLang);
   const [review,setReview]=useState(false);
   const openedReview=useRef(false);
@@ -211,6 +212,8 @@ export default function StudioClient({initialLang="fr"}:{initialLang?:StudioLang
       setLogo(url);setLogoFileName(file.name);setTemplate(2);setLogoPending(false);
     }catch{reject("Logo invalide ou dimensions excessives ; aucun nouveau logo appliqué.");}
   }
+  // No public route, environment flag or URL parameter supplies this component; only the isolated CI harness.
+  if(review&&LabReview)return <LabReview lang={lang} onLanguage={changeLanguage} onBack={()=>setReview(false)} preview={<Sign data={data} template={template} view={view} palette={palette} lang={lang} defaultBoard={paletteId==="vert"&&!customColors}/>}/>;
   if(review)return <PriceReview lang={lang} onLanguage={changeLanguage} onBack={()=>setReview(false)} preview={<Sign data={data} template={template} view={view} palette={palette} lang={lang} defaultBoard={paletteId==="vert"&&!customColors}/>} name={name} needsAdaptation={warning} />;
   return <main className="studio-page" lang={lang} dir={lang==="ar"?"rtl":"ltr"}>
     <header className="studio-header"><Link href={lang==="ar"?"/ar":"/"} className="brand studio-brand">PANOKIT</Link><div className="nav studio-header-actions"><Link href={"/catalogue/enseignes/lumineuses?lang="+lang} className="back studio-back"><span aria-hidden="true">{lang==="ar"?"→":"←"}</span><span>{t("Catalogue")}</span></Link><div className="lang studio-language" role="group" aria-label="Langue / اللغة"><button type="button" aria-pressed={lang==="fr"} onClick={()=>changeLanguage("fr")}>FR</button><button type="button" aria-pressed={lang==="ar"} onClick={()=>changeLanguage("ar")}>العربية</button></div></div></header>
