@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           export J06_EVIDENCE="$RUNNER_TEMP/j06-evidence"
           mkdir -p "$J06_EVIDENCE"
-          pnpm --filter @panokit/web start --hostname 127.0.0.1 --port 3000 > "$J06_EVIDENCE/server.log" 2>&1 &
+          pnpm --filter @panokit/web start --hostname 127.0.0.1 --port 3000 > "$RUNNER_TEMP/j06-live-server.log" 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
           for i in $(seq 1 60); do curl --fail --silent http://127.0.0.1:3000/prix-livraison >/dev/null && break; sleep 1; done
@@ -52,7 +52,9 @@ jobs:
           node apps/web/tests/j06-price-review.mjs
           result=$?
           set -e
-          (cd "$J06_EVIDENCE"; sha256sum *.png *.json server.log > SHA256SUMS)
+          # Snapshot the live log into the evidence directory; shutdown cannot mutate it.
+          cp "$RUNNER_TEMP/j06-live-server.log" "$J06_EVIDENCE/server.log"
+          (cd "$J06_EVIDENCE"; sha256sum *.png *.json server.log > SHA256SUMS; sha256sum -c SHA256SUMS)
           test "$result" = 0
           test "$(find "$J06_EVIDENCE" -maxdepth 1 -name '*.png' | wc -l)" = 16
       - name: Upload J06 evidence
