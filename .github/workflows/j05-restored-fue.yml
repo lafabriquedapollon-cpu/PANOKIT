@@ -1,0 +1,141 @@
+name: J05 restored Studio FUE (no deploy)
+on:
+  push:
+    branches: [quality/j05-restored-fue-20261127]
+permissions:
+  contents: read
+jobs:
+  studio-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: "10.22.0"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.13.1"
+      - name: Verify exact product source boundary
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD
+          test "$(git diff --name-only 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD)" = ".github/workflows/j05-restored-fue.yml"
+          git diff --exit-code 790f3ee74bc25c2cd0f9448f76b65d1e61c756ab HEAD -- apps packages pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @panokit/web build
+      - name: Pinned Playwright installation
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/panokit-playwright
+          cp apps/api/security/sec01-compose/browser.package-lock.json /tmp/panokit-playwright/package-lock.json
+          cd /tmp/panokit-playwright
+          printf '%s\n' '{"name":"panokit-browser-lab","version":"0.0.0","private":true,"dependencies":{"playwright":"1.65.1"}}' > package.json
+          echo '089dd64d2f709c5ac17b105afb5d1ef79c2af98d6a9afe597955b431d9b90c28  package-lock.json' | sha256sum -c -
+          npm ci --ignore-scripts --no-audit --no-fund
+          ./node_modules/.bin/playwright install chromium
+      - name: Capture actual Studio and audit
+        run: |
+          set -euo pipefail
+          export J05_EVIDENCE="$RUNNER_TEMP/j05-evidence"
+          export PRODUCT_SHA="790f3ee74bc25c2cd0f9448f76b65d1e61c756ab"
+          mkdir -p "$J05_EVIDENCE"
+          cat > "$RUNNER_TEMP/j05.mjs" <<'JS'
+          import assert from 'node:assert/strict';
+          import {mkdirSync,writeFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          import {chromium} from '/tmp/panokit-playwright/node_modules/playwright/index.mjs';
+          const out=process.env.J05_EVIDENCE,origin='http://127.0.0.1:3000';
+          mkdirSync(join(out,'raw'),{recursive:true});
+          const browser=await chromium.launch({headless:true}),report={productSha:process.env.PRODUCT_SHA,checks:[],observations:[],captures:[],errors:[]};
+          const check=(id,ok,detail)=>report.checks.push({id,ok:Boolean(ok),detail});
+          const obs=(id,detail)=>report.observations.push({id,detail});
+          const metrics=p=>p.evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,htmlLang:document.documentElement.lang,htmlDir:document.documentElement.dir,mainLang:document.querySelector('main').lang,mainDir:document.querySelector('main').dir,previewTop:document.querySelector('.studio-preview').getBoundingClientRect().top,previewWidth:document.querySelector('.studio-main-sign-scroll').clientWidth,svgWidth:document.querySelector('.studio-main-sign-scroll svg').getBoundingClientRect().width}));
+          const shot=async(p,key,state)=>{await p.evaluate(()=>document.fonts.ready);const file=key+'-'+state+'.jpeg';await p.screenshot({path:join(out,file),type:'jpeg',quality:92,fullPage:true,animations:'disabled'});report.captures.push(file)};
+          const logo=Buffer.from(await (async()=>{const p=await browser.newPage();const a=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=96;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,96,96);x.fillStyle='#184843';x.fillRect(10,10,76,76);x.fillStyle='#f46b0a';x.fillRect(25,25,46,46);return c.toDataURL('image/png').split(',')[1]});await p.close();return a})(),'base64');
+          const wait=async(p,loc)=>{await loc.scrollIntoViewIfNeeded();await p.waitForTimeout(450)};
+          try{
+          for(const lang of ['fr','ar'])for(const width of [390,1440]){
+          const key=lang+'-'+width,height=width===390?844:1000,ar=lang==='ar';
+          const c=await browser.newContext({viewport:{width,height},deviceScaleFactor:1,hasTouch:width===390,isMobile:width===390,recordVideo:{dir:join(out,'raw'),size:{width,height}}});
+          const p=await c.newPage();p.on('pageerror',e=>report.errors.push({key,message:e.message}));
+          const video=p.video(),main=p.locator('main.studio-page'),sign=p.locator('.studio-main-sign-scroll svg'),gate=p.locator('.studio-gate button'),name=p.locator('#studio-name'),tpl=p.locator('.studio-template'),views=p.locator('.studio-views button');
+          try{
+          await p.goto(origin+'/studio',{waitUntil:'networkidle'});
+          if(ar)await p.getByRole('button',{name:'العربية',exact:true}).click();
+          await p.waitForTimeout(350);
+          check(key+'/locale',(await main.getAttribute('dir'))===(ar?'rtl':'ltr')&&(await main.getAttribute('lang'))===lang);
+          check(key+'/initial-gate',await gate.isDisabled());
+          check(key+'/four-templates',await tpl.count()===4);
+          const init=await metrics(p);obs(key+'/initial-layout',init);check(key+'/no-page-overflow',init.scrollWidth<=width+1);
+          await shot(p,key,'01-empty');
+          const demo=ar?'متجر تجريبي':'ATELIER TEST';
+          await name.fill(demo);await p.locator('#studio-activity').fill(ar?'نشاط تجريبي':'Activité test');await p.locator('#studio-slogan').fill(ar?'نص تجريبي':'Slogan test');
+          check(key+'/live-name',(await sign.textContent()).includes(demo));await wait(p,sign);await shot(p,key,'02-flat');
+          for(let i=0;i<4;i++){await tpl.nth(i).click();check(key+'/template-'+(i+1),(await tpl.nth(i).getAttribute('aria-pressed'))==='true');check(key+'/template-name-'+(i+1),(await sign.textContent()).includes(demo))}
+          await tpl.nth(1).click();check(key+'/no-logo',await sign.locator('image').count()===0);
+          await p.locator('#studio-logo').setInputFiles({name:'test-only.png',mimeType:'image/png',buffer:logo});await sign.locator('image').waitFor({state:'attached'});
+          check(key+'/logo-preview',(await sign.locator('image').getAttribute('href')).startsWith('data:image/png;'));await wait(p,sign);await shot(p,key,'03-logo');
+          await views.nth(1).click();check(key+'/day',(await views.nth(1).getAttribute('aria-pressed'))==='true');await wait(p,sign);await shot(p,key,'04-day');
+          await views.nth(2).click();check(key+'/night',(await views.nth(2).getAttribute('aria-pressed'))==='true');await wait(p,sign);await shot(p,key,'05-night');
+          await p.locator('.studio-palette-option').nth(2).click();check(key+'/palette',(await p.locator('.studio-palette-option').nth(2).getAttribute('aria-pressed'))==='true');
+          await p.locator('#studio-color-board').evaluate(el=>{el.value='#123456';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))});
+          obs(key+'/custom-color',await p.locator('#studio-color-board').inputValue());
+          await p.locator('.studio-text-button').click();check(key+'/remove-logo',await sign.locator('image').count()===0);
+          await p.locator('#studio-logo').setInputFiles({name:'test-only.svg',mimeType:'image/svg+xml',buffer:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')});
+          check(key+'/reject-svg',await p.locator('.studio-fields [role=alert]').isVisible());
+          const long=ar?'اسم تجريبي طويل للغاية '.repeat(7).trim():'ATELIER TEST NOM COMMERCIAL TRES LONG '.repeat(5).trim();
+          await name.fill(long);check(key+'/original-long-name',(await name.inputValue())===long);check(key+'/long-warning',await p.locator('.studio-preview [role=alert]').isVisible());
+          await wait(p,sign);await shot(p,key,'06-long');
+          await wait(p,gate);check(key+'/final-gate',await gate.isDisabled());await shot(p,key,'07-blocked');
+          await name.focus();await p.keyboard.press('Tab');obs(key+'/keyboard-next',await p.evaluate(()=>({id:document.activeElement?.id,tag:document.activeElement?.tagName})));
+          obs(key+'/back-href',await p.locator('.studio-back').getAttribute('href'));
+          obs(key+'/final-layout',await metrics(p));
+          }catch(e){report.errors.push({key,message:String(e)});await shot(p,key,'error').catch(()=>{})}
+          finally{await c.close();await video.saveAs(join(out,key+'.webm'))}
+          }
+          for(const lang of ['fr','ar'])for(const width of [195,320,375,414,768]){
+          const p=await browser.newPage({viewport:{width,height:844}});const key=lang+'-'+width;
+          try{await p.goto(origin+'/studio',{waitUntil:'networkidle'});if(lang==='ar')await p.getByRole('button',{name:'العربية',exact:true}).click();await p.locator('#studio-name').fill(lang==='ar'?'اختبار':'TEST');const m=await metrics(p);obs(key+'/reflow',m);check(key+'/no-page-overflow',m.scrollWidth<=width+1);check(key+'/gate',await p.locator('.studio-gate button').isDisabled());if(width===195||width===320)await shot(p,key,'reflow')}catch(e){report.errors.push({key,message:String(e)})}finally{await p.close()}
+          }
+          }finally{await browser.close();writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({checks:report.checks.length,passed:report.checks.filter(x=>x.ok).length,failed:report.checks.filter(x=>!x.ok),errors:report.errors,captures:report.captures.length}));}
+          assert.equal(report.errors.length,0);assert.equal(report.checks.filter(x=>!x.ok).length,0);
+          
+          JS
+          pnpm --filter @panokit/web start --hostname 127.0.0.1 --port 3000 > "$RUNNER_TEMP/j05-next.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do curl --fail --silent http://127.0.0.1:3000/studio >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:3000/studio >/dev/null
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          set +e
+          node "$RUNNER_TEMP/j05.mjs"
+          result=$?
+          set -e
+          for lang in fr ar; do
+            for width in 390 1440; do
+              key="$lang-$width"
+              ffmpeg -nostdin -v error -y -i "$J05_EVIDENCE/$key.webm" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$J05_EVIDENCE/$key.mp4"
+              ffmpeg -nostdin -v error -i "$J05_EVIDENCE/$key.mp4" -f null -
+              ffprobe -v error -show_entries stream=codec_name,width,height:format=duration -of json "$J05_EVIDENCE/$key.mp4" > "$J05_EVIDENCE/$key-video.json"
+              rm "$J05_EVIDENCE/$key.webm"
+            done
+          done
+          rm -rf "$J05_EVIDENCE/raw"
+          (cd "$J05_EVIDENCE"; sha256sum *.jpeg *.mp4 *.json > SHA256SUMS)
+          test "$result" = 0
+          test "$(find "$J05_EVIDENCE" -maxdepth 1 -name '*.jpeg' | wc -l)" = 32
+      - name: Upload Studio evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: j05-restored-studio-evidence
+          path: ${{ runner.temp }}/j05-evidence
+          retention-days: 30
+          if-no-files-found: error
