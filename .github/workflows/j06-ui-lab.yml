@@ -91,7 +91,7 @@ jobs:
           export J06_UI_EVIDENCE="$RUNNER_TEMP/j06-ui-evidence"
           mkdir -p "$J06_UI_EVIDENCE"
           node quote-ui-lab.mjs --disposable-lab
-          (cd "$J06_UI_EVIDENCE"; sha256sum *.png report.json j07-react-report.json > SHA256SUMS; sha256sum -c SHA256SUMS)
+          (cd "$J06_UI_EVIDENCE"; sha256sum *.png report.json j07-react-report.json j07-d2-report.json > SHA256SUMS; sha256sum -c SHA256SUMS)
       - name: Upload isolated simulation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
