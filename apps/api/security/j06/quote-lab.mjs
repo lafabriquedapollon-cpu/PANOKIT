@@ -732,6 +732,83 @@ try{
    await runPgReactD2({broker:imageBroker,binding:rasterCtx,otherSession,previewDigest:projection.previewDigest,replace:verifyReplacement});
   }else await verifyReplacement();
  }finally{await imageBroker.close();}
+ // M3 is additive to the existing dedicated J08 PG17/React proof. All
+ // sessions, OTP deliveries and assets are synthetic; no external SMS.
+ if(process.env.J08_D2_REACT_ORIGIN){
+  const mutationBroker=await startBatStatusBroker(batAdapter,120000,transportGate,batAdapter);
+  let m3Passed=0,version=14,digest=archiveDigest;
+  const m3=async(name,fn)=>{await fn();m3Passed++;console.log('J08_M3 '+JSON.stringify({name,status:'PASS'}));};
+  const next=async()=>{
+   assert.equal(await decision(work,version,digest,'feasible')||await decision(work,version,digest,'correction'),true);
+   assert.equal(Number(await issue(iss,version,fixtureSource())),version+1);
+   version++;digest=fixtureDigest;
+   assert.equal(await decision(work,version,digest,'feasible'),true);
+   const r=await batAdapter.rotate({caseId:activeBatCase,version,digest},session);assert.equal(r.status,'ok');
+   return {caseId:activeBatCase,version,linkToken:r.value.linkToken,sourceSession:session,expectedDigest:digest};
+  };
+  const provision=b=>mutationBroker.provision(b);
+  const req=(s,path,body={})=>fetch(mutationBroker.origin+path,{method:'POST',headers:{origin:mutationBroker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0]},body:JSON.stringify(body)});
+  const show=async s=>{const r=await req(s,'/bat/preview');assert.equal(r.status,200);assert.equal(r.headers.get('x-bat-source-sha256'),fixtureDigest);const bytes=Buffer.from(await r.arrayBuffer());assert.equal(createHash('sha256').update(bytes).digest('hex'),r.headers.get('x-bat-preview-sha256'));};
+  const call=async(s,input)=>{const r=await req(s,'/bat/decision',input);assert.equal(r.headers.get('cache-control'),'no-store');return {code:r.status,body:await r.json()};};
+  const ok=result=>({code:200,body:{scope:'LAB',manufacturable:false,version,result}});
+  const no={code:403,body:{status:'unavailable',manufacturable:false}};
+  const request={action:'request-otp'},refuse={action:'refuse',explicit:true,locale:'ar'};
+  const confirm=code=>({action:'confirm',explicit:true,locale:'fr',code});
+  const count=()=>scalar(admin,'select count(*)::int from j08_private.bat_decisions where case_id=$1 and version=$2',[activeBatCase,version]);
+  const row=async()=> (await admin.query('select decision,locale,digest,statement_version,challenge_id from j08_private.bat_decisions where case_id=$1 and version=$2',[activeBatCase,version])).rows[0];
+  const otp=async s=>{
+   const n=fakeMessages.length;assert.deepEqual(await call(s,request),ok('otp-sent'));assert.equal(fakeMessages.length,n+1);
+   const m=fakeMessages[n];assert.equal(m.version,version);
+   assert.equal(await scalar(admin,'select count(*)::int from j08_private.otp_challenges where challenge_id=$1',[m.challengeId]),1);
+   return m;
+  };
+  try{
+   await m3('P01 exact preview, OTP delivery and durable approval, replay denied',async()=>{
+    const b=await next(),s=provision(b);await show(s);
+    const m=await otp(s);assert.deepEqual(await call(s,confirm(m.code)),ok('approved'));
+    assert.deepEqual(await row(),{decision:'approved',locale:'fr',digest:fixtureDigest,statement_version:'lab-bat-v1',challenge_id:m.challengeId});
+    assert.equal(await count(),1);assert.deepEqual(await call(s,confirm(m.code)),no);
+    const r=await req(s,'/bat/status');assert.deepEqual(await r.json(),{scope:'LAB',manufacturable:false,version,status:'approved'});
+   });
+   await m3('P02 five incorrect OTP attempts are durable and lock confirmation',async()=>{
+    const b=await next(),s=provision(b);await show(s);const m=await otp(s);
+    const wrong=m.code==='000000'?'000001':'000000';
+    for(let i=1;i<=5;i++)assert.deepEqual(await call(s,confirm(wrong)),ok(i===5?'locked':'wrong'));
+    assert.deepEqual(await series(version),{attempts:5,issued_count:1});
+    assert.deepEqual(await call(s,confirm(m.code)),no);assert.equal(await count(),0);
+   });
+   await m3('P03 two independent cookies race approval versus refusal: exactly one decision',async()=>{
+    const b=await next(),a=provision(b),z=provision(b);await show(a);await show(z);const m=await otp(a);
+    assert.deepEqual(await call(z,confirm(m.code)),no);
+    const results=await Promise.all([call(a,confirm(m.code)),call(z,refuse)]);
+    assert.equal(results.filter(x=>x.code===200).length,1);assert.equal(results.filter(x=>x.code===403).length,1);
+    const winner=results.find(x=>x.code===200).body.result;assert.ok(['approved','refused'].includes(winner));
+    assert.equal(await count(),1);assert.equal((await row()).decision,winner);
+   });
+   await m3('P04 rotation denies stale cookie after preview and challenge issuance',async()=>{
+    const b=await next(),s=provision(b);await show(s);const m=await otp(s);
+    const r=await batAdapter.rotate({caseId:activeBatCase,version,digest},session);assert.equal(r.status,'ok');
+    assert.deepEqual(await call(s,confirm(m.code)),no);assert.equal(await count(),0);
+    const n=provision({...b,linkToken:r.value.linkToken});await show(n);assert.deepEqual(await call(n,refuse),ok('refused'));assert.equal((await row()).decision,'refused');
+   });
+   await m3('P05 foreign source session cannot preview or issue OTP; explicit refusal durable',async()=>{
+    const b=await next(),foreign=provision({...b,sourceSession:otherSession}),s=provision(b);
+    const r=await req(foreign,'/bat/preview');assert.equal(r.status,403);await r.json();
+    assert.deepEqual(await call(foreign,request),no);assert.equal(await count(),0);
+    await show(s);assert.deepEqual(await call(s,refuse),ok('refused'));
+    assert.deepEqual(await row(),{decision:'refused',locale:'ar',digest:fixtureDigest,statement_version:'lab-bat-v1',challenge_id:null});
+    assert.deepEqual(await call(s,refuse),no);
+   });
+   await m3('P06 superseded version rejects already issued OTP and preserves no consent',async()=>{
+    const b=await next(),s=provision(b);await show(s);const m=await otp(s),prior=version;
+    await next();
+    assert.deepEqual(await call(s,confirm(m.code)),no);
+    assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_decisions where case_id=$1 and version=$2',[activeBatCase,prior]),0);
+    assert.equal(await count(),0);
+   });
+   assert.equal(m3Passed,6);console.log('J08_M3_RESULT '+JSON.stringify({passed:m3Passed,failed:0,notRun:0}));
+  }finally{await mutationBroker.close();}
+ }
  assert.equal(imagePassed,4);console.log('J08_IMAGE_HTTP_RESULT '+JSON.stringify({passed:imagePassed,failed:0,notRun:0}));
  assert.equal(rasterPassed,4);console.log('J08_RASTER_RESULT '+JSON.stringify({passed:rasterPassed,failed:0,notRun:0}));
  assert.equal(brokerPassed,4);console.log('J08_BROKER_RESULT '+JSON.stringify({passed:brokerPassed,failed:0,notRun:0}));
