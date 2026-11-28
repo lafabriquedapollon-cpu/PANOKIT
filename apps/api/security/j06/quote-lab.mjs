@@ -675,8 +675,15 @@ try{
    const bytes=Buffer.from(await r.arrayBuffer());assert.deepEqual(bytes,Buffer.from(projection.pngBase64,'base64'));
   });
   await itest('I02 wrong session, origin and injected digest denied without PNG',async()=>{
-   for(const r of [await imageCall(imageBroker.provision({...rasterCtx,sourceSession:otherSession})),await imageCall(imageSession,'{}',{origin:'http://invalid.test'}),await imageCall(imageSession,JSON.stringify({expectedDigest:fixtureDigest}))]){
-    assert.ok([400,403].includes(r.status));assert.deepEqual(await r.json(),deniedStatus.body);assert.equal(r.headers.get('x-bat-preview-sha256'),null);
+   const cases=[
+    ['wrong session',403,()=>imageCall(imageBroker.provision({...rasterCtx,sourceSession:otherSession}))],
+    ['wrong origin',403,()=>imageCall(imageSession,'{}',{origin:'http://invalid.test'})],
+    ['short injected field',400,()=>imageCall(imageSession,JSON.stringify({expectedDigest:'x'}))],
+    ['oversized digest injection',413,()=>imageCall(imageSession,JSON.stringify({expectedDigest:fixtureDigest}))]
+   ];
+   assert.ok(Buffer.byteLength(JSON.stringify({expectedDigest:fixtureDigest}))>64);
+   for(const [label,code,request] of cases){
+    const r=await request();assert.equal(r.status,code,label);assert.deepEqual(await r.json(),deniedStatus.body,label);assert.equal(r.headers.get('x-bat-preview-sha256'),null,label);
    }
   });
   await itest('I03 status-only session and revoked cookie cannot fetch PNG',async()=>{
