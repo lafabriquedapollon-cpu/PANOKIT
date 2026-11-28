@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,indu
 const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -23,6 +23,7 @@ async function gtest(name,fn){await fn();gPassed++;console.log('J07_D1B '+JSON.s
 async function htest(name,fn){await fn();hPassed++;console.log('J07_SESSION '+JSON.stringify({name,status:'PASS'}));}
 async function vtest(name,fn){await fn();vPassed++;console.log('J07_VISUAL '+JSON.stringify({name,status:'PASS'}));}
 async function j08test(name,fn){await fn();j08Passed++;console.log('J08_PG '+JSON.stringify({name,status:'PASS'}));}
+async function linktest(name,fn){await fn();linkPassed++;console.log('J08_LINK '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -40,7 +41,7 @@ try{
  await boot.query('create database '+db);
  for(const role of roles){creds[role]=randomBytes(32).toString('hex');await boot.query("create role "+role+" login password '"+creds[role]+"' nosuperuser nocreatedb nocreaterole noreplication nobypassrls");}
  admin=await connect('postgres',pw);await admin.query('revoke connect,temporary on database '+db+' from public');await admin.query('grant connect on database '+db+' to '+roles.join(','));await admin.query('revoke create on schema public from public');
- await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));
+ await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-link-lab.sql',import.meta.url),'utf8'));
  [editor,approver,revoker,runtime,outsider,ie,ia,ir]=await Promise.all(['j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j03_editor','j03_approver','j03_revoker'].map(login));
  listener=await startQuoteHttpLab(adapter);
  await test('B01 empty industrial fails closed',async()=>{assert.equal((await calc(request)).reason,'industrial_unavailable');});
@@ -272,6 +273,74 @@ try{
   assert.equal(await scalar(admin,"select count(*)::int from j08_private.events where event='superseded'"),1);
   assert.equal(await events(),7);
  });
+ const client=await login('j08_client'), sourceSession=hashToken(session), wrongSession=hashToken(otherSession);
+ const linkHash=()=>hashToken(randomBytes(32).toString('hex'));
+ const rotate=(c,k,v=2,cap=sourceSession,d=archiveDigest)=>tx(c,'select j08_private.rotate_link($1,$2,$3,$4,$5)',[activeBatCase,v,d,cap,k]);
+ const readBat=(c,k,v=2,cap=sourceSession,id=activeBatCase)=>tx(c,'select j08_private.read_bat($1,$2,$3,$4)',[id,v,cap,k]);
+ const revoke=(c,k,v=2)=>tx(c,'select j08_private.revoke_link($1,$2,$3)',[activeBatCase,v,k]);
+ const l1=linkHash(),l2=linkHash(),l3=linkHash();let winner;
+ await linktest('L01 role separation and helper denial',async()=>{
+  for(const c of [client,issuer,workshop,intake,runtime,outsider]){
+   await denied(()=>c.query('select * from j08_private.links'));
+   await denied(()=>c.query('delete from j08_private.link_events'));
+  }
+  await denied(()=>rotate(client,l1));await denied(()=>readBat(issuer,l1));
+  await denied(()=>tx(client,'select j08_private.lock_valid_link($1,$2,$3,$4)',[activeBatCase,2,sourceSession,l1]));
+  await denied(()=>client.query('select j08_private.read_bat($1,$2,$3,$4)',[activeBatCase,2,sourceSession,l1]));
+ });
+ await linktest('L02 wrong source session, old version and digest denied',async()=>{
+  assert.equal(await rotate(issuer,l1,2,wrongSession),false);
+  assert.equal(await rotate(issuer,l1,1),false);
+  assert.equal(await rotate(issuer,l1,2,sourceSession,'0'.repeat(64)),false);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),0);
+ });
+ await linktest('L03 exact private projection and fixed seven-day TTL',async()=>{
+  assert.equal(await rotate(issuer,l1),true);
+  const result=await readBat(client,l1);
+  assert.deepEqual(Object.keys(result).sort(),['bytesBase64','digest','manufacturable','scope','version']);
+  assert.equal(result.version,2);assert.equal(result.digest,archiveDigest);assert.equal(result.manufacturable,false);
+  assert.deepEqual(Buffer.from(result.bytesBase64,'base64'),archiveBytes);
+  assert.equal(await scalar(admin,'select extract(epoch from expires_at-issued_at)::int from j08_private.links'),604800);
+  assert.equal(await readBat(client,l1,2,wrongSession),null);
+  assert.equal(await readBat(client,l1,1),null);
+  assert.equal(await readBat(client,linkHash()),null);
+  assert.equal(await readBat(client,l1,2,sourceSession,'44444444-4444-4444-8444-444444444444'),null);
+ });
+ await linktest('L04 rollback rotation preserves previous link and audit',async()=>{
+  await issuer.query('begin isolation level serializable');
+  try{assert.equal(await scalar(issuer,'select j08_private.rotate_link($1,$2,$3,$4,$5)',[activeBatCase,2,archiveDigest,sourceSession,l2]),true);}
+  finally{await issuer.query('rollback');}
+  assert.ok(await readBat(client,l1));assert.equal(await readBat(client,l2),null);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),1);
+ });
+ await linktest('L05 rotation invalidates old token; duplicate cannot revoke current',async()=>{
+  assert.equal(await rotate(issuer,l2),true);assert.equal(await readBat(client,l1),null);
+  assert.equal(await rotate(issuer,l1),false);assert.ok(await readBat(client,l2));
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),3);
+ });
+ await linktest('L06 concurrent rotations leave exactly one current token',async()=>{
+  const second=await login('j08_issuer'),a=linkHash(),b=linkHash();
+  const out=await Promise.allSettled([rotate(issuer,a),rotate(second,b)]);
+  assert.ok(out.some(x=>x.status==='fulfilled'&&x.value===true));
+  for(const x of out)if(x.status==='rejected')assert.equal(x.reason.code,'40001');
+  const allowed=await Promise.all([readBat(client,a),readBat(await login('j08_client'),b)]);
+  assert.equal(allowed.filter(Boolean).length,1);winner=allowed[0]?a:b;
+  assert.equal(await readBat(client,l2),null);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links where revoked_at is null'),1);
+ });
+ await linktest('L07 revoke is terminal for token; expired fixture denied',async()=>{
+  assert.equal(await revoke(issuer,winner),true);assert.equal(await revoke(issuer,winner),false);
+  assert.equal(await readBat(client,winner),null);assert.equal(await rotate(issuer,l3),true);
+  // Privileged fixture-only clock simulation; runtime roles cannot alter timestamps.
+  await admin.query("update j08_private.links set issued_at=t,expires_at=t+interval '168 hours' from (select clock_timestamp()-interval '169 hours' t) x where token_hash=$1",[l3]);
+  assert.equal(await readBat(client,l3),null);
+ });
+ await linktest('L08 bounded renewals and exactly one current link',async()=>{
+  const count=await scalar(admin,'select count(*)::int from j08_private.links');
+  for(let i=count;i<10;i++){winner=linkHash();assert.equal(await rotate(issuer,winner),true);}
+  assert.equal(await rotate(issuer,linkHash()),false);assert.ok(await readBat(client,winner));
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),10);
+ });
  await test('B08 injected price, zone, malformed JSON rejected',async()=>{for(const x of [{...request,price:1},{...delivery,fulfillment:{...delivery.fulfillment,zoneId:'test-zone'}},{...request,options:['test-a','test-a']}])assert.equal((await call(x)).status,400);const b=await fetch(listener.url,{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:'{' });assert.equal(b.status,400);assert.equal(Number(await scalar(admin,'select count(*) from j06_private.quotes')),2);});
  await test('B09 invalid mapping refused',async()=>{await assert.rejects(()=>save(editor,t2,tariffLabDigest(t2),{'real-address':{zoneId:'x',depotId:'y'}}),e=>e.code==='22023');});
  await test('B10 concurrent optimistic writers exactly one winner',async()=>{const second=await login('j06_editor');const out=await Promise.allSettled([save(editor,t2),save(second,t2)]);assert.equal(out.filter(x=>x.status==='fulfilled').length,1);assert.equal(out.find(x=>x.status==='rejected').reason.code,'40001');assert.equal((await calc(request)).reason,'tariff_unavailable');});
@@ -297,6 +366,14 @@ try{
   assert.deepEqual(await scalar(admin,'select bat_bytes from j08_private.versions where version=2'),archiveBytes);
   assert.equal(await scalar(admin,'select technical_version::int from j08_private.cases'),2);
  });
+ await linktest('L09 restart retains revocation, expiry and one active link',async()=>{
+  const after=await login('j08_client');
+  assert.ok(await readBat(after,winner));assert.equal(await readBat(after,l1),null);
+  assert.equal(await readBat(after,l3),null);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),10);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),19);
+ });
+ assert.equal(linkPassed,9);console.log('J08_LINK_RESULT '+JSON.stringify({passed:linkPassed,failed:0,notRun:0}));
  assert.equal(j08Passed,8);console.log('J08_PG_RESULT '+JSON.stringify({passed:j08Passed,failed:0,notRun:0}));
  assert.equal(vPassed,7);console.log('J07_VISUAL_RESULT '+JSON.stringify({passed:vPassed,failed:0,notRun:0}));
  assert.equal(hPassed,5);console.log('J07_SESSION_RESULT '+JSON.stringify({passed:hPassed,failed:0,notRun:0}));
