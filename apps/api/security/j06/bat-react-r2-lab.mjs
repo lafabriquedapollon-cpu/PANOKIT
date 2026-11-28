@@ -35,6 +35,7 @@ async function layout(p,key,lang){
  check(key+'/locale',await root.getAttribute('dir')===(lang==='ar'?'rtl':'ltr')&&await root.getAttribute('lang')===lang);
  const m=await p.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,h1:document.querySelectorAll('[data-testid=j08-r2] h1').length,enabled:[...document.querySelectorAll('[data-testid=j08-r2] button,[data-testid=j08-r2] input,[data-testid=j08-r2] textarea')].filter(x=>!x.disabled).length}));
  check(key+'/layout',m.scroll<=m.width+1&&m.h1===1);check(key+'/no-actions',m.enabled===0);
+ const weights=await root.locator('h1,h2').evaluateAll(nodes=>nodes.map(n=>Number(getComputedStyle(n).fontWeight)));check(key+'/approved-heading-weight',weights.length>0&&weights.every(w=>w>=700));
 }
 try{
  // Explicit static gallery is independent from live state: no broker capability provisioned.

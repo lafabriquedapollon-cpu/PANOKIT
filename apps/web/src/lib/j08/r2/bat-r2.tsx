@@ -36,7 +36,7 @@ function Screen({id,lang,display}:{id:string;lang:Lang;display:Display}){
 }
 /** Explicitly separate fixture review. Never import this component into a public page. */
 export function BatR2Fixture({id,lang}:{id:string;lang:Lang}){
- return <><p lang={lang} dir={lang==='ar'?'rtl':'ltr'}>{copy[lang].fixture}</p><Screen id={id} lang={lang} display={{kind:'fixture'}}/></>;
+ return <><p className="j08-fixture-note" lang={lang} dir={lang==='ar'?'rtl':'ltr'}>{copy[lang].fixture}</p><Screen id={id} lang={lang} display={{kind:'fixture'}}/></>;
 }
 type Result={generation:number;state?:BatLabState;url?:string};
 /** Only the existing authenticated loopback broker can supply live state. No mutation API. */

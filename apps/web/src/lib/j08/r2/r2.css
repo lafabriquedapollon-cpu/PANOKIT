@@ -146,3 +146,8 @@
 .j08-lab .compare .compare-intro{padding:0 12px 10px}
 .j08-lab .compare .compare-item .preview svg{max-height:110px}}
 .j08-lab .verified-image{display:block;width:100%;height:auto}.j08-lab button:disabled{cursor:not-allowed;background:#e9e6e0;color:#55534e;border-color:#d8d4cc}.j08-lab .runtime-note{margin:12px 0;color:var(--muted);font-size:13px}.j08-lab .runtime-refresh{max-width:420px;margin-top:12px}.j08-lab .runtime-status{padding:0 28px 20px;max-width:1180px;margin:auto}
+
+/* Restore the approved standalone R2 typography against Next/Tailwind preflight. */
+.j08-lab h1,.j08-lab h2{font-weight:700}
+.j08-fixture-note{margin:0;padding:8px 16px;background:#f8f6f2;color:#515658;border-bottom:1px solid #e5e1dc;font:700 12px/1.45 Arial,"Noto Sans Arabic",sans-serif;text-align:center}
+.j08-lab .runtime-refresh{cursor:pointer;min-height:48px}
