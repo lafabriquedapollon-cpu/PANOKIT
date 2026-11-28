@@ -7,11 +7,14 @@ import {createRequire} from 'node:module';
 import EmbeddedPostgres from 'embedded-postgres';
 import pgDriver from 'pg';
 import {startPriceUiLab} from './quote-ui-broker.mjs';
+import {runGuestTransportLab} from './guest-ui-lab.mjs';
+import {runGuestReactLab} from './guest-react-lab.mjs';
 import {chromium} from '/tmp/panokit-playwright/node_modules/playwright/index.mjs';
 import {mkdirSync,writeFileSync} from 'node:fs';
 const {Client}=pgDriver;
 assert.deepEqual(process.argv.slice(2),['--disposable-lab']);assert(process.getuid()!==0);
 const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,industrialDigest}=require(process.env.J03_ADMISSION),{tariffLabDigest}=require(process.env.J06_ENGINE),{persistLabQuote}=require(process.env.J06_PORT),{startQuoteHttpLab}=require(process.env.J06_HTTP);
+const guestDomain=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
 const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,lease,ui,browser;const contexts=[];
@@ -38,7 +41,7 @@ try{
  await boot.query('create database '+db);
  for(const role of roles){creds[role]=randomBytes(32).toString('hex');await boot.query("create role "+role+" login password '"+creds[role]+"' nosuperuser nocreatedb nocreaterole noreplication nobypassrls");}
  admin=await connect('postgres',pw);await admin.query('revoke connect,temporary on database '+db+' from public');await admin.query('grant connect on database '+db+' to '+roles.join(','));await admin.query('revoke create on schema public from public');
- await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));
+ await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));
  [editor,approver,revoker,runtime,outsider,ie,ia,ir]=await Promise.all(['j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j03_editor','j03_approver','j03_revoker'].map(login));
  listener=await startQuoteHttpLab(adapter);
  await scalar(ie,'select j03_private.save_draft($1,$2,$3,$4)',[industrial.formatId,0,JSON.stringify(industrial),digest]);
@@ -48,6 +51,8 @@ try{
  const out=process.env.J06_UI_EVIDENCE;mkdirSync(out,{recursive:true});
  ui=await startPriceUiLab({api:listener,fixture:request,css,master:readFileSync(process.env.J06_MASTER),clientSource:readFileSync(new URL('./quote-ui-client.js',import.meta.url),'utf8'),delayPickup:500});
  browser=await chromium.launch({headless:true});
+ await runGuestTransportLab({browser,domain:guestDomain,connect:adapter,fixture:request,preview:readFileSync(process.env.J06_MASTER),admin});
+ await runGuestReactLab({browser,domain:guestDomain,connect:adapter,fixture:request,preview:readFileSync(process.env.J06_MASTER),admin,out});
  const report={sha:process.env.GITHUB_SHA,checks:[],captures:[]};
  const check=(id,ok)=>{report.checks.push({id,ok:!!ok});assert.ok(ok,id);};
  const wait=(p,state)=>p.locator('#app[data-state='+state+']').waitFor({state:'visible'});
@@ -77,5 +82,14 @@ try{
  await listener.close();listener=undefined;
  for(const {p,key} of contexts){await p.locator('[data-action=delivery]').click();await capture(p,key,'unavailable');}
  check('all-64-captures',report.captures.length===64);
+ const archiveProof=async(c)=>(await c.query("select receipt_id::text,visual_digest,encode(sha256(svg_bytes),'hex') as actual,octet_length(svg_bytes) as size from j06_private.guest_visual_archive order by receipt_id")).rows;
+ const original=await archiveProof(admin);assert.equal(original.length,11);assert(original.every(x=>x.visual_digest===x.actual&&x.size>0));
+ for(const c of [editor,approver,revoker,runtime,outsider]){
+  await denied(()=>c.query('select * from j06_private.guest_visual_archive'));
+  await denied(()=>c.query('delete from j06_private.guest_visual_archive'));
+ }
+ await ui.close();ui=undefined;for(const c of [...clients])await close(c);await pg.stop();started=false;await pg.start();started=true;admin=await connect('postgres',pw);
+ assert.deepEqual(await archiveProof(admin),original);console.log('J07_ARCHIVE_RESTART PASS');
+
  }finally{writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2));console.log('J06_UI_RESULT '+JSON.stringify({checks:report.checks.length,passed:report.checks.filter(x=>x.ok).length,captures:report.captures.length}));}
 }finally{for(const {ctx} of contexts)await ctx.close();if(browser)await browser.close();if(ui)await ui.close();if(listener)await listener.close();for(const c of [...clients])await close(c);if(started)await pg.stop();rmSync(dir,{recursive:true,force:true});}

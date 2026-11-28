@@ -27,7 +27,17 @@ jobs:
           git merge-base --is-ancestor 57a6a6487c7553791e8c4ab747e0b3342c65e755 HEAD
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - name: Build with temporary non-public React LAB entry
+        run: |
+          set -euo pipefail
+          test ! -e apps/web/src/app/j07-lab
+          mkdir apps/web/src/app/j07-lab
+          trap 'rm -f apps/web/src/app/j07-lab/page.tsx; rmdir apps/web/src/app/j07-lab' EXIT
+          cp apps/web/src/lab/j07/lab-page.tsx apps/web/src/app/j07-lab/page.tsx
+          pnpm build
+          pnpm --filter @panokit/web exec tsc --target ES2022 --lib ES2022,DOM --module commonjs --moduleResolution node --jsx react-jsx --esModuleInterop --skipLibCheck --strict --outDir .next/j07-renderer src/lab/j07/server-visual.ts
+          test -f apps/web/.next/j07-renderer/lab/j07/server-visual.js
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22.16.0"
@@ -49,6 +59,19 @@ jobs:
           export J06_ENGINE="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-lab.js"
           export J06_PORT="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-pg-lab.js"
           export J06_HTTP="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-http-lab.js"
+          export J07_REACT_ORIGIN="http://127.0.0.1:39177"
+          export J07_RENDERER="$GITHUB_WORKSPACE/apps/web/.next/j07-renderer/lab/j07/server-visual.js"
+          export J07_MASTER_NIGHT="$GITHUB_WORKSPACE/apps/web/public/studio-v4/STU-ENV-01-master-night.svg"
+          pnpm --filter @panokit/web exec next start --hostname 127.0.0.1 --port 39177 >"$RUNNER_TEMP/j07-next.log" 2>&1 &
+          next_pid=$!
+          trap 'kill "$next_pid" 2>/dev/null || true; wait "$next_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for i in $(seq 1 40); do
+            if curl -fsS "$J07_REACT_ORIGIN/j07-lab" >/dev/null; then ready=true; break; fi
+            if ! kill -0 "$next_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then cat "$RUNNER_TEMP/j07-next.log"; exit 1; fi
           mkdir -m 700 "$RUNNER_TEMP/j06-ui-pg"
           cp apps/api/security/j03/industrial-lab.sql apps/api/security/j06/* "$RUNNER_TEMP/j06-ui-pg/"
           cp apps/api/security/sec01-compose/package-lock.json "$RUNNER_TEMP/j06-ui-pg/"
@@ -68,7 +91,7 @@ jobs:
           export J06_UI_EVIDENCE="$RUNNER_TEMP/j06-ui-evidence"
           mkdir -p "$J06_UI_EVIDENCE"
           node quote-ui-lab.mjs --disposable-lab
-          (cd "$J06_UI_EVIDENCE"; sha256sum *.png report.json > SHA256SUMS; sha256sum -c SHA256SUMS)
+          (cd "$J06_UI_EVIDENCE"; sha256sum *.png report.json j07-react-report.json j07-d2-report.json > SHA256SUMS; sha256sum -c SHA256SUMS)
       - name: Upload isolated simulation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
