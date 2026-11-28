@@ -79,7 +79,8 @@ test("J08 M2-02 requires verified preview of same provisioned cookie",async()=>{
 });
 test("J08 M2-03 origin, media type, cookie, route and ambiguous JSON rejected",async()=>{
  const f=await mutationFixture();try{await f.show();
-  for(const patch of [{origin:"http://evil.invalid"},{"sec-fetch-site":"cross-site"},{cookie:""},{"content-type":"text/plain"},{"content-encoding":"gzip"},{cookie:f.headers.cookie+"; "+f.headers.cookie}])await f.deny(await f.call(issue,"/bat/decision",patch));
+  const patches:Record<string,string>[]=[{origin:"http://evil.invalid"},{"sec-fetch-site":"cross-site"},{cookie:""},{"content-type":"text/plain"},{"content-encoding":"gzip"},{cookie:f.headers.cookie+"; "+f.headers.cookie}];
+  for(const patch of patches)await f.deny(await f.call(issue,"/bat/decision",patch));
   await f.deny(await f.call(issue,"/bat/decision?x=1"));
   await f.deny(await f.call('{"action":"refuse","action":"request-otp"}',"/bat/decision",{},true),400);
   await f.deny(await f.call("x".repeat(257),"/bat/decision",{},true),413);
