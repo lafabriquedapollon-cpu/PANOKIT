@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,indu
 const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -22,6 +22,7 @@ async function ctest(name,fn){await fn();cPassed++;console.log('J06_C '+JSON.str
 async function gtest(name,fn){await fn();gPassed++;console.log('J07_D1B '+JSON.stringify({name,status:'PASS'}));}
 async function htest(name,fn){await fn();hPassed++;console.log('J07_SESSION '+JSON.stringify({name,status:'PASS'}));}
 async function vtest(name,fn){await fn();vPassed++;console.log('J07_VISUAL '+JSON.stringify({name,status:'PASS'}));}
+async function j08test(name,fn){await fn();j08Passed++;console.log('J08_PG '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -39,7 +40,7 @@ try{
  await boot.query('create database '+db);
  for(const role of roles){creds[role]=randomBytes(32).toString('hex');await boot.query("create role "+role+" login password '"+creds[role]+"' nosuperuser nocreatedb nocreaterole noreplication nobypassrls");}
  admin=await connect('postgres',pw);await admin.query('revoke connect,temporary on database '+db+' from public');await admin.query('grant connect on database '+db+' to '+roles.join(','));await admin.query('revoke create on schema public from public');
- await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));
+ await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));
  [editor,approver,revoker,runtime,outsider,ie,ia,ir]=await Promise.all(['j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j03_editor','j03_approver','j03_revoker'].map(login));
  listener=await startQuoteHttpLab(adapter);
  await test('B01 empty industrial fails closed',async()=>{assert.equal((await calc(request)).reason,'industrial_unavailable');});
@@ -203,6 +204,74 @@ try{
   assert.equal(await consentCount(),2);
   assert.equal(await scalar(admin,"select locale from j06_private.guest_visual_consents where receipt_id=$1",[deliveryReceipt]),'ar');
  });
+ const [intake,issuer,workshop,wrongWorkshop]=await Promise.all(['j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b'].map(login));
+ const batCase='11111111-1111-4111-8111-111111111111',batOther='22222222-2222-4222-8222-222222222222';let activeBatCase=batCase;
+ const tx=async(c,q,args)=>{await c.query('begin isolation level serializable');try{const v=await scalar(c,q,args);await c.query('commit');return v;}catch(e){await c.query('rollback');throw e;}};
+ const open=(c,caseId=batCase,receipt=pickupReceipt,cap=hashToken(session))=>tx(c,'select j08_private.open_case($1,$2,$3,$4)',[caseId,receipt,cap,'j08_workshop_a']);
+ const decision=(c,version,d,event)=>tx(c,'select j08_private.decide($1,$2,$3,$4)',[activeBatCase,version,d,event]);
+ const issue=(c,version,b=archiveBytes)=>tx(c,'select j08_private.issue($1,$2,$3)',[activeBatCase,version,b]);
+ const events=()=>scalar(admin,'select count(*)::int from j08_private.events');
+ await j08test('P01 least privilege, no direct read/write or cross-function',async()=>{
+  for(const c of [intake,issuer,workshop,wrongWorkshop,runtime,outsider]){
+   await denied(()=>c.query('select * from j08_private.cases'));
+   await denied(()=>c.query('delete from j08_private.events'));
+   await denied(()=>c.query('update j08_private.versions set digest=\'x\''));
+   await denied(()=>c.query('set role j08_owner'));
+  }
+  await denied(()=>open(issuer));await denied(()=>issue(intake,0));
+  await denied(()=>intake.query('select j08_private.open_case($1,$2,$3,$4)',[batCase,pickupReceipt,hashToken(session),'j08_workshop_a']));
+ });
+ await j08test('P02 wrong session and receipt without archived bytes denied',async()=>{
+  assert.equal(await open(intake,batCase,pickupReceipt,hashToken(otherSession)),false);
+  assert.equal(await open(intake,batCase,deliveryReceipt),false);
+  assert.equal(await events(),0);
+ });
+ await j08test('P03 concurrent intake creates one case with exact J07 provenance',async()=>{
+  const second=await login('j08_intake');
+  const results=await Promise.allSettled([open(intake),open(second,batOther)]);
+  assert.equal(results.filter(x=>x.status==='fulfilled'&&x.value===true).length,1);
+  for(const x of results)if(x.status==='rejected')assert.equal(x.reason.code,'40001');
+  const actual=(await admin.query('select case_id::text,receipt_id::text,source_digest,source_bytes from j08_private.cases')).rows;
+  assert.equal(actual.length,1);assert.equal(actual[0].receipt_id,pickupReceipt);
+  assert.equal(actual[0].source_digest,archiveDigest);assert.deepEqual(actual[0].source_bytes,archiveBytes);
+  // Use the actual winning case for subsequent steps.
+  activeBatCase=actual[0].case_id;
+  assert.equal(await open(intake,batOther,pickupReceipt),false);assert.equal(await events(),1);
+ });
+ await j08test('P04 wrong workshop and digest cannot approve; no issue before review',async()=>{
+  assert.equal(await issue(issuer,0),null);
+  assert.equal(await decision(wrongWorkshop,0,archiveDigest,'feasible'),false);
+  assert.equal(await decision(workshop,0,'0'.repeat(64),'feasible'),false);
+  assert.equal(await decision(workshop,0,archiveDigest,'feasible'),true);
+  assert.equal(await decision(workshop,0,archiveDigest,'feasible'),false);
+  assert.equal(await events(),2);
+ });
+ await j08test('P05 rollback of issuance leaves no version or event',async()=>{
+  await issuer.query('begin isolation level serializable');
+  try{assert.equal(Number(await scalar(issuer,'select j08_private.issue($1,$2,$3)',[activeBatCase,0,archiveBytes])),1);}
+  finally{await issuer.query('rollback');}
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),0);assert.equal(await events(),2);
+ });
+ await j08test('P06 concurrent issuer same head exactly one new immutable version',async()=>{
+  const second=await login('j08_issuer');
+  const out=await Promise.allSettled([issue(issuer,0),issue(second,0)]);
+  assert.equal(out.filter(x=>x.status==='fulfilled'&&Number(x.value)===1).length,1);
+  for(const x of out)if(x.status==='rejected')assert.equal(x.reason.code,'40001');
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),1);
+  assert.equal(await scalar(admin,'select technical from j08_private.cases'),'review');assert.equal(await events(),3);
+ });
+ await j08test('P07 technical decision bound to exact version, correction replaces only on issuance',async()=>{
+  assert.equal(await decision(workshop,0,archiveDigest,'feasible'),false);
+  assert.equal(await decision(workshop,1,'0'.repeat(64),'correction'),false);
+  assert.equal(await decision(workshop,1,archiveDigest,'correction'),true);
+  assert.equal(Number(await issue(issuer,1,archiveBytes)),2);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),2);
+  assert.equal(await decision(workshop,1,archiveDigest,'feasible'),false);
+  assert.equal(await decision(workshop,2,archiveDigest,'feasible'),true);
+  assert.equal(await scalar(admin,'select technical_version::int from j08_private.cases'),2);
+  assert.equal(await scalar(admin,"select count(*)::int from j08_private.events where event='superseded'"),1);
+  assert.equal(await events(),7);
+ });
  await test('B08 injected price, zone, malformed JSON rejected',async()=>{for(const x of [{...request,price:1},{...delivery,fulfillment:{...delivery.fulfillment,zoneId:'test-zone'}},{...request,options:['test-a','test-a']}])assert.equal((await call(x)).status,400);const b=await fetch(listener.url,{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:'{' });assert.equal(b.status,400);assert.equal(Number(await scalar(admin,'select count(*) from j06_private.quotes')),2);});
  await test('B09 invalid mapping refused',async()=>{await assert.rejects(()=>save(editor,t2,tariffLabDigest(t2),{'real-address':{zoneId:'x',depotId:'y'}}),e=>e.code==='22023');});
  await test('B10 concurrent optimistic writers exactly one winner',async()=>{const second=await login('j06_editor');const out=await Promise.allSettled([save(editor,t2),save(second,t2)]);assert.equal(out.filter(x=>x.status==='fulfilled').length,1);assert.equal(out.find(x=>x.status==='rejected').reason.code,'40001');assert.equal((await calc(request)).reason,'tariff_unavailable');});
@@ -220,6 +289,15 @@ try{
  await ctest('C08 restart retains lease history, not authority',async()=>{assert.equal(Number(await scalar(admin,'select count(*) from j06_private.leases')),6);listener=await startQuoteHttpLab(adapter);const a=await leaseCall('revalidate',{leaseToken:lease.leaseToken});assert.equal(a.status,409);assert.equal(a.body.reason,'industrial_unavailable');});
  await gtest('G08 restart preserves receipts and withdrawn industry rejects lease',async()=>{assert.equal(await admissionCount(),2);assert.equal((await admit(guestCurrentToken)).reason,'industrial_unavailable');});
  await vtest('V07 restart retains evidence but no order authority',async()=>{assert.equal(await consentCount(),2);assert.equal(await archiveCount(),1);assert.deepEqual(await scalar(admin,'select svg_bytes from j06_private.guest_visual_archive where receipt_id=$1',[pickupReceipt]),archiveBytes);assert.equal((await acknowledge()).reason,'industrial_unavailable');});
+ await j08test('P08 restart preserves exact versions, provenance and event history',async()=>{
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.cases'),1);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),2);
+  assert.equal(await events(),7);
+  assert.deepEqual(await scalar(admin,'select source_bytes from j08_private.cases'),archiveBytes);
+  assert.deepEqual(await scalar(admin,'select bat_bytes from j08_private.versions where version=2'),archiveBytes);
+  assert.equal(await scalar(admin,'select technical_version::int from j08_private.cases'),2);
+ });
+ assert.equal(j08Passed,8);console.log('J08_PG_RESULT '+JSON.stringify({passed:j08Passed,failed:0,notRun:0}));
  assert.equal(vPassed,7);console.log('J07_VISUAL_RESULT '+JSON.stringify({passed:vPassed,failed:0,notRun:0}));
  assert.equal(hPassed,5);console.log('J07_SESSION_RESULT '+JSON.stringify({passed:hPassed,failed:0,notRun:0}));
  assert.equal(gPassed,8);console.log('J07_D1B_RESULT '+JSON.stringify({passed:gPassed,failed:0,notRun:0}));
