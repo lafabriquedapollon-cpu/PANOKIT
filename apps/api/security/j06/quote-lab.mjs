@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {randomBytes,createHash} from 'node:crypto';
+import {randomBytes,createHash,randomInt,createHmac} from 'node:crypto';
 import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,indu
 const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client','j08_otp_sender'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,otpPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -24,6 +24,7 @@ async function htest(name,fn){await fn();hPassed++;console.log('J07_SESSION '+JS
 async function vtest(name,fn){await fn();vPassed++;console.log('J07_VISUAL '+JSON.stringify({name,status:'PASS'}));}
 async function j08test(name,fn){await fn();j08Passed++;console.log('J08_PG '+JSON.stringify({name,status:'PASS'}));}
 async function linktest(name,fn){await fn();linkPassed++;console.log('J08_LINK '+JSON.stringify({name,status:'PASS'}));}
+async function otptest(name,fn){await fn();otpPassed++;console.log('J08_OTP '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -41,7 +42,7 @@ try{
  await boot.query('create database '+db);
  for(const role of roles){creds[role]=randomBytes(32).toString('hex');await boot.query("create role "+role+" login password '"+creds[role]+"' nosuperuser nocreatedb nocreaterole noreplication nobypassrls");}
  admin=await connect('postgres',pw);await admin.query('revoke connect,temporary on database '+db+' from public');await admin.query('grant connect on database '+db+' to '+roles.join(','));await admin.query('revoke create on schema public from public');
- await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-link-lab.sql',import.meta.url),'utf8'));
+ await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-link-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-otp-lab.sql',import.meta.url),'utf8'));
  [editor,approver,revoker,runtime,outsider,ie,ia,ir]=await Promise.all(['j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j03_editor','j03_approver','j03_revoker'].map(login));
  listener=await startQuoteHttpLab(adapter);
  await test('B01 empty industrial fails closed',async()=>{assert.equal((await calc(request)).reason,'industrial_unavailable');});
@@ -373,6 +374,115 @@ try{
   assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),10);
   assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),19);
  });
+ const [otpSender,otpClient,otpIssuer,otpWorkshop]=await Promise.all(['j08_otp_sender','j08_client','j08_issuer','j08_workshop_a'].map(login));
+ const code=()=>String(randomInt(0,1000000)).padStart(6,'0');
+ const otpIssue=(c,k,v,p,cap=sourceSession,d=archiveDigest)=>tx(c,'select j08_private.issue_otp($1,$2,$3,$4,$5,$6)',[activeBatCase,v,cap,k,d,p]);
+ const confirm=(c,k,v,q,p,cap=sourceSession,d=archiveDigest,statement='lab-bat-v1',locale='fr')=>tx(c,'select j08_private.confirm_otp($1,$2,$3,$4,$5,$6,$7,$8,$9)',[activeBatCase,v,cap,k,d,q,p,statement,locale]);
+ const refuse=(c,k,v,explicit)=>tx(c,'select j08_private.refuse_bat($1,$2,$3,$4,$5,$6,$7)',[activeBatCase,v,sourceSession,k,archiveDigest,explicit,'ar']);
+ const expire=(c,v)=>tx(c,'select j08_private.expire_bat($1,$2,$3)',[activeBatCase,v,archiveDigest]);
+ const countDecisions=()=>scalar(admin,'select count(*)::int from j08_private.bat_decisions');
+ const series=async v=>(await admin.query('select attempts,issued_count from j08_private.otp_series where case_id=$1 and version=$2',[activeBatCase,v])).rows[0];
+ const allowResend=v=>admin.query("update j08_private.otp_series set last_issued_at=clock_timestamp()-interval '31 seconds' where case_id=$1 and version=$2",[activeBatCase,v]);
+ const nextVersion=async v=>{assert.equal(await decision(otpWorkshop,v-1,archiveDigest,'correction'),true);assert.equal(Number(await issue(otpIssuer,v-1)),v);assert.equal(await decision(otpWorkshop,v,archiveDigest,'feasible'),true);const k=linkHash();assert.equal(await rotate(otpIssuer,k,v),true);return k;};
+ let p=code(),q,k3,k4,k5,k6;
+ await otptest('O01 role separation and private secret/HMAC denial',async()=>{
+  for(const c of [otpClient,otpSender,otpIssuer,otpWorkshop]){
+   for(const table of ['otp_secret','otp_series','otp_challenges','bat_decisions','bat_expirations','otp_events'])await denied(()=>c.query('select * from j08_private.'+table));
+   await denied(()=>c.query('delete from j08_private.bat_decisions'));
+   await denied(()=>c.query("select j08_private.otp_mac($1,$2,$3,$4,$5,$6,$7)",[batCase,batCase,2,archiveDigest,winner,sourceSession,p]));
+  }
+  await denied(()=>otpIssue(otpClient,winner,2,p));await denied(()=>confirm(otpSender,winner,2,batCase,p));
+ });
+ await otptest('O02 invalid context, HMAC and five-minute expiry',async()=>{
+  assert.equal(await otpIssue(otpSender,winner,2,p,wrongSession),null);
+  assert.equal(await otpIssue(otpSender,winner,2,p,sourceSession,'0'.repeat(64)),null);
+  assert.equal(await otpIssue(otpSender,l1,2,p),null);
+  q=await otpIssue(otpSender,winner,2,p);assert.match(q,/^[a-f0-9-]{36}$/);
+  const row=(await admin.query('select mac,extract(epoch from expires_at-issued_at)::int as ttl from j08_private.otp_challenges where challenge_id=$1',[q])).rows[0];
+  const key=await scalar(admin,'select key_bytes from j08_private.otp_secret');
+  const expected=createHmac('sha256',key).update(['panokit-lab-otp-v1',q,activeBatCase,2,archiveDigest,winner,sourceSession,p].join('|')).digest();
+  assert.deepEqual(row.mac,expected);assert.equal(row.ttl,300);
+  assert.equal(await confirm(otpClient,winner,2,q,p,wrongSession),'denied');
+  assert.equal(await confirm(otpClient,winner,2,q,p,sourceSession,archiveDigest,'other'),'denied');
+  assert.deepEqual(await series(2),{attempts:0,issued_count:1});
+  assert.equal(await otpIssue(otpSender,winner,2,code()),null);
+ });
+ await otptest('O03 expired challenge denied; resend retains wrong attempts',async()=>{
+  assert.equal(await confirm(otpClient,winner,2,q,'invalid'),'wrong');
+  await admin.query("update j08_private.otp_challenges set issued_at=t,expires_at=t+interval '5 minutes' from (select clock_timestamp()-interval '6 minutes' t) x where challenge_id=$1",[q]);
+  assert.equal(await confirm(otpClient,winner,2,q,p),'denied');
+  await allowResend(2);const old=q,oldCode=p;p=code();q=await otpIssue(otpSender,winner,2,p);
+  assert.ok(q);assert.notEqual(q,old);
+  assert.equal(await confirm(otpClient,winner,2,old,oldCode),'denied');
+  assert.deepEqual(await series(2),{attempts:1,issued_count:2});
+ });
+ await otptest('O04 rollback approval leaves challenge reusable',async()=>{
+  await otpClient.query('begin isolation level serializable');
+  try{assert.equal(await scalar(otpClient,'select j08_private.confirm_otp($1,$2,$3,$4,$5,$6,$7,$8,$9)',[activeBatCase,2,sourceSession,winner,archiveDigest,q,p,'lab-bat-v1','fr']),'approved');}
+  finally{await otpClient.query('rollback');}
+  assert.equal(await countDecisions(),0);assert.ok(await readBat(otpClient,winner));
+ });
+ await otptest('O05 concurrent correct code yields exactly one immutable decision',async()=>{
+  const another=await login('j08_client');
+  const out=await Promise.allSettled([confirm(otpClient,winner,2,q,p),confirm(another,winner,2,q,p)]);
+  assert.equal(out.filter(x=>x.status==='fulfilled'&&x.value==='approved').length,1);
+  for(const x of out)if(x.status==='rejected')assert.ok(['40001','23505'].includes(x.reason.code));
+  assert.equal(await countDecisions(),1);
+  const proof=(await admin.query('select version::int,digest,decision,challenge_id,statement_version,locale from j08_private.bat_decisions')).rows[0];
+  assert.deepEqual(proof,{version:2,digest:archiveDigest,decision:'approved',challenge_id:q,statement_version:'lab-bat-v1',locale:'fr'});
+  assert.equal(await confirm(otpClient,winner,2,q,p),'denied');
+  assert.equal(await readBat(otpClient,winner),null);
+  assert.equal(await rotate(otpIssuer,linkHash()),false);
+ });
+ await otptest('O06 correction of approved BAT creates new version without copying consent',async()=>{
+  k3=await nextVersion(3);assert.equal(await countDecisions(),1);
+  assert.equal(await readBat(otpClient,winner),null);assert.ok(await readBat(otpClient,k3,3));
+  assert.equal(await otpIssue(otpSender,winner,2,code()),null);
+ });
+ await otptest('O07 five attempts persist across rotation and resend',async()=>{
+  p=code();q=await otpIssue(otpSender,k3,3,p);assert.ok(q);
+  assert.equal(await confirm(otpClient,k3,3,q,'invalid'),'wrong');
+  const oldKey=k3;k3=linkHash();assert.equal(await rotate(otpIssuer,k3,3),true);
+  assert.equal(await confirm(otpClient,k3,3,q,p),'denied');
+  assert.equal(await confirm(otpClient,oldKey,3,q,p),'denied');
+  await allowResend(3);p=code();q=await otpIssue(otpSender,k3,3,p);
+  for(let i=2;i<=5;i++)assert.equal(await confirm(otpClient,k3,3,q,'invalid'),i===5?'locked':'wrong');
+  assert.equal(await confirm(otpClient,k3,3,q,p),'locked');
+  await allowResend(3);assert.equal(await otpIssue(otpSender,k3,3,code()),null);
+  assert.deepEqual(await series(3),{attempts:5,issued_count:2});
+ });
+ await otptest('O08 explicit refusal terminal and excludes consent',async()=>{
+  k4=await nextVersion(4);assert.equal(await refuse(otpClient,k4,4,false),false);
+  assert.equal(await refuse(otpClient,k4,4,true),true);
+  assert.equal(await refuse(otpClient,k4,4,true),false);
+  assert.equal(await otpIssue(otpSender,k4,4,code()),null);
+  assert.equal(await rotate(otpIssuer,linkHash(),4),false);
+  assert.equal(await scalar(admin,"select count(*)::int from j08_private.bat_decisions where decision='refused'"),1);
+ });
+ await otptest('O09 independent business expiry blocks valid access',async()=>{
+  k5=await nextVersion(5);p=code();q=await otpIssue(otpSender,k5,5,p);assert.ok(q);
+  await denied(()=>expire(otpClient,5));
+  assert.equal(await expire(otpIssuer,5),true);assert.equal(await expire(otpIssuer,5),false);
+  assert.equal(await readBat(otpClient,k5,5),null);assert.equal(await confirm(otpClient,k5,5,q,p),'denied');
+ });
+ await otptest('O10 issuance ceiling without resetting attempts',async()=>{
+  k6=await nextVersion(6);
+  for(let i=1;i<=5;i++){if(i>1)await allowResend(6);assert.ok(await otpIssue(otpSender,k6,6,code()));}
+  await allowResend(6);assert.equal(await otpIssue(otpSender,k6,6,code()),null);
+  assert.deepEqual(await series(6),{attempts:0,issued_count:5});
+ });
+ await otptest('O11 restart preserves decisions, expiry and counters',async()=>{
+  await listener.close();listener=undefined;
+  for(const c of [...clients])await close(c);await pg.stop();started=false;await pg.start();started=true;admin=await connect('postgres',pw);
+  const c=await login('j08_client'),sender=await login('j08_otp_sender');
+  assert.equal(await countDecisions(),2);assert.deepEqual(await series(3),{attempts:5,issued_count:2});
+  assert.deepEqual(await series(6),{attempts:0,issued_count:5});
+  assert.equal(await otpIssue(sender,k6,6,code()),null);
+  assert.equal(await readBat(c,k5,5),null);assert.equal(await readBat(c,k4,4),null);
+  assert.equal(await scalar(admin,"select count(*)::int from j08_private.otp_events where event='approved'"),1);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_expirations'),1);
+ });
+ assert.equal(otpPassed,11);console.log('J08_OTP_RESULT '+JSON.stringify({passed:otpPassed,failed:0,notRun:0}));
  assert.equal(linkPassed,9);console.log('J08_LINK_RESULT '+JSON.stringify({passed:linkPassed,failed:0,notRun:0}));
  assert.equal(j08Passed,8);console.log('J08_PG_RESULT '+JSON.stringify({passed:j08Passed,failed:0,notRun:0}));
  assert.equal(vPassed,7);console.log('J07_VISUAL_RESULT '+JSON.stringify({passed:vPassed,failed:0,notRun:0}));
