@@ -747,7 +747,8 @@ try{
    return {caseId:activeBatCase,version,linkToken:r.value.linkToken,sourceSession:session,expectedDigest:digest};
   };
   const provision=b=>mutationBroker.provision(b);
-  const req=(s,path,body={})=>fetch(mutationBroker.origin+path,{method:'POST',headers:{origin:mutationBroker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0]},body:JSON.stringify(body)});
+  const brokerFetch=globalThis.fetch;
+  const req=(s,path,body={})=>brokerFetch(mutationBroker.origin+path,{method:'POST',headers:{origin:mutationBroker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0]},body:JSON.stringify(body)});
   const show=async s=>{const r=await req(s,'/bat/preview');assert.equal(r.status,200);assert.equal(r.headers.get('x-bat-source-sha256'),fixtureDigest);const bytes=Buffer.from(await r.arrayBuffer());assert.equal(createHash('sha256').update(bytes).digest('hex'),r.headers.get('x-bat-preview-sha256'));};
   const call=async(s,input)=>{const r=await req(s,'/bat/decision',input);assert.equal(r.headers.get('cache-control'),'no-store');return {code:r.status,body:await r.json()};};
   const ok=result=>({code:200,body:{scope:'LAB',manufacturable:false,version,result}});
@@ -807,6 +808,64 @@ try{
     assert.equal(await count(),0);
    });
    assert.equal(m3Passed,6);console.log('J08_M3_RESULT '+JSON.stringify({passed:m3Passed,failed:0,notRun:0}));
+   // M4-A: exercise the actual TypeScript browser transport over the same real
+   // loopback broker. The fetch shim only supplies browser-managed headers.
+   const webRoot=join(process.env.J06_PORT,'../../../../web');
+   const ts=createRequire(join(webRoot,'package.json'))('typescript');
+   const source=readFileSync(join(webRoot,'src/lib/j08/bat-lab-transport.ts'),'utf8');
+   const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+   const transport=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+   const nativeFetch=globalThis.fetch,priorWindow=Object.getOwnPropertyDescriptor(globalThis,'window');
+   const fakeWindow={location:new URL(mutationBroker.origin)};
+   let browserSession,transportCalls=0,m4Passed=0,syntheticResponse;
+   const m4=async(name,fn)=>{await fn();m4Passed++;console.log('J08_M4A '+JSON.stringify({name,status:'PASS'}));};
+   Object.defineProperty(globalThis,'window',{value:fakeWindow,configurable:true});
+   globalThis.fetch=async(path,init)=>{
+    transportCalls++;
+    assert.equal(path,'/bat/decision');assert.equal(init.method,'POST');assert.equal(init.credentials,'same-origin');assert.equal(init.cache,'no-store');assert.equal(init.redirect,'error');assert.equal(init.mode,'same-origin');
+    const body=JSON.parse(init.body);
+    assert.ok(Object.keys(body).every(k=>['action','explicit','locale','code'].includes(k)));
+    if(syntheticResponse)return syntheticResponse();
+    return nativeFetch(mutationBroker.origin+path,{...init,headers:{...init.headers,origin:mutationBroker.origin,'sec-fetch-site':'same-origin',cookie:browserSession.cookie.split(';')[0]}});
+   };
+   const unavailable={status:'unavailable'};
+   const response=result=>({status:'ok',value:{scope:'LAB',manufacturable:false,version,result}});
+   const submit=(input,v=version,signal)=>transport.submitBatLabDecision(input,v,signal);
+   try{
+    await m4('T01 input shape, version, cancellation and non-loopback deny before fetch',async()=>{
+     const n=transportCalls;
+     for(const input of [null,{}, {...request,challengeId:'foreign'}, {...request,version}, {...refuse,explicit:false}, confirm('12345'), {...confirm('123456'),locale:'en'}])assert.deepEqual(await submit(input),unavailable);
+     assert.deepEqual(await submit(request,0),unavailable);
+     const ac=new AbortController();ac.abort();assert.deepEqual(await submit(request,version,ac.signal),unavailable);
+     fakeWindow.location=new URL('https://example.invalid');assert.deepEqual(await submit(request),unavailable);fakeWindow.location=new URL(mutationBroker.origin);
+     assert.equal(transportCalls,n);
+    });
+    await m4('T02 untrusted response shapes, result and version fail closed without retry',async()=>{
+     const good={scope:'LAB',manufacturable:false,version,result:'otp-sent'};
+     const payloads=[{...good,version:version+1},{...good,result:'approved'},{...good,manufacturable:true},{...good,challengeId:'foreign'},{...good,scope:'LIVE'}];
+     const n=transportCalls;
+     for(const value of payloads){
+      syntheticResponse=()=>new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
+      assert.deepEqual(await submit(request),unavailable);
+     }
+     syntheticResponse=()=>{throw Error('simulated lost acknowledgement');};assert.deepEqual(await submit(request),unavailable);
+     assert.equal(transportCalls,n+payloads.length+1);syntheticResponse=undefined;
+    });
+    await m4('T03 real transport requests OTP and confirms exact PG17 BAT',async()=>{
+     const b=await next();browserSession=provision(b);await show(browserSession);const n=fakeMessages.length;
+     assert.deepEqual(await submit(request),response('otp-sent'));assert.equal(fakeMessages.length,n+1);
+     assert.deepEqual(await submit(confirm(fakeMessages[n].code)),response('approved'));
+     assert.equal(await count(),1);assert.equal((await row()).decision,'approved');
+     assert.deepEqual(await submit(confirm(fakeMessages[n].code)),unavailable);
+    });
+    await m4('T04 real transport explicit Arabic refusal; replay denied',async()=>{
+     const b=await next();browserSession=provision(b);await show(browserSession);
+     assert.deepEqual(await submit(refuse),response('refused'));assert.equal((await row()).locale,'ar');
+     assert.deepEqual(await submit(refuse),unavailable);assert.equal(await count(),1);
+    });
+   }finally{globalThis.fetch=nativeFetch;if(priorWindow)Object.defineProperty(globalThis,'window',priorWindow);else delete globalThis.window;}
+   assert.equal(m4Passed,4);console.log('J08_M4A_RESULT '+JSON.stringify({passed:m4Passed,failed:0,notRun:0}));
+
   }finally{await mutationBroker.close();}
  }
  assert.equal(imagePassed,4);console.log('J08_IMAGE_HTTP_RESULT '+JSON.stringify({passed:imagePassed,failed:0,notRun:0}));

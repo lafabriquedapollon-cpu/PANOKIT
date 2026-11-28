@@ -1,5 +1,5 @@
-// J08 LAB only. No public route, identity, mutations, storage or visual design.
-// Browser capabilities stay in the HttpOnly cookie; requests have empty bodies.
+// J08 LAB only. No public route, identity, persistent storage or visual design.
+// Browser capabilities stay in the HttpOnly cookie; read requests have empty bodies.
 export type BatLabStatus="review"|"waiting"|"approved"|"refused"|"expired"|"replaced"|"locked";
 type Outcome<T>={status:"ok";value:T}|{status:"unavailable"};
 export type BatLabState={scope:"LAB";manufacturable:false;version:number;status:BatLabStatus};
@@ -9,9 +9,9 @@ const hex=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v)
 const fail=()=>({status:"unavailable" as const});
 const signature=[137,80,78,71,13,10,26,10];
 function labOrigin(){return typeof window!=="undefined"&&window.location.protocol==="http:"&&window.location.hostname==="127.0.0.1";}
-async function request(path:"/bat/status"|"/bat/preview",signal?:AbortSignal){
+async function request(path:"/bat/status"|"/bat/preview"|"/bat/decision",signal?:AbortSignal,body="{}"){
  if(!labOrigin()||signal?.aborted)throw Error("LAB_UNAVAILABLE");
- const r=await fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:"{}",credentials:"same-origin",cache:"no-store",redirect:"error",mode:"same-origin",signal});
+ const r=await fetch(path,{method:"POST",headers:{"content-type":"application/json"},body,credentials:"same-origin",cache:"no-store",redirect:"error",mode:"same-origin",signal});
  if(r.status!==200||r.headers.get("cache-control")!=="no-store"||r.headers.get("x-content-type-options")!=="nosniff")throw Error("LAB_UNAVAILABLE");
  return r;
 }
@@ -44,5 +44,36 @@ export async function readBatLabPreview(signal?:AbortSignal):Promise<Outcome<Bat
   const actual=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),v=>v.toString(16).padStart(2,"0")).join("");
   if(actual!==previewDigest||signal?.aborted)return fail();
   return {status:"ok",value:{blob:new Blob([bytes],{type:"image/png"}),sourceDigest,previewDigest}};
+ }catch{return fail();}
+}
+
+export type BatLabDecisionInput={action:"request-otp"}|{action:"confirm";explicit:true;locale:"fr"|"ar";code:string}|{action:"refuse";explicit:true;locale:"fr"|"ar"};
+export type BatLabDecisionResult="otp-sent"|"approved"|"wrong"|"locked"|"refused";
+export type BatLabDecisionState={scope:"LAB";manufacturable:false;version:number;result:BatLabDecisionResult};
+function exactOwn(v:unknown,keys:readonly string[]):v is Record<string,unknown>{
+ if(!v||typeof v!=="object"||Array.isArray(v)||![Object.prototype,null].includes(Object.getPrototypeOf(v)))return false;
+ return Reflect.ownKeys(v).length===keys.length&&keys.every(k=>Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)??{},"value"));
+}
+/** Explicit LAB decision only; never invoked on mount or automatic refresh.
+ * Expected version is a local response guard, never a server authorization.
+ * An unavailable response may represent a committed decision: reconcile via status,
+ * never retry automatically. No browser persistence, token or challenge identifier. */
+export async function submitBatLabDecision(input:BatLabDecisionInput,expectedVersion:number,signal?:AbortSignal):Promise<Outcome<BatLabDecisionState>>{
+ try{
+  if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1)return fail();
+  let payload:BatLabDecisionInput,allowed:readonly string[];
+  if(exactOwn(input,["action"])&&input.action==="request-otp"){
+   payload={action:"request-otp"};allowed=["otp-sent"];
+  }else if(exactOwn(input,["action","explicit","locale","code"])&&input.action==="confirm"&&input.explicit===true&&(input.locale==="fr"||input.locale==="ar")&&typeof input.code==="string"&&/^[0-9]{6}$/.test(input.code)){
+   payload={action:"confirm",explicit:true,locale:input.locale,code:input.code};allowed=["approved","wrong","locked"];
+  }else if(exactOwn(input,["action","explicit","locale"])&&input.action==="refuse"&&input.explicit===true&&(input.locale==="fr"||input.locale==="ar")){
+   payload={action:"refuse",explicit:true,locale:input.locale};allowed=["refused"];
+  }else return fail();
+  const r=await request("/bat/decision",signal,JSON.stringify(payload));
+  if(r.headers.get("content-type")!=="application/json; charset=utf-8")return fail();
+  const raw=new TextDecoder("utf-8",{fatal:true}).decode(await readBounded(r,512,signal));
+  const value:unknown=JSON.parse(raw);
+  if(JSON.stringify(value)!==raw||!exactOwn(value,["scope","manufacturable","version","result"])||value.scope!=="LAB"||value.manufacturable!==false||value.version!==expectedVersion||typeof value.result!=="string"||!allowed.includes(value.result)||signal?.aborted)return fail();
+  return {status:"ok",value:{scope:"LAB",manufacturable:false,version:expectedVersion,result:value.result as BatLabDecisionResult}};
  }catch{return fail();}
 }
