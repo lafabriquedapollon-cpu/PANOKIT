@@ -60,13 +60,13 @@ export function issueBat(c:Case,role:Role,bytes:Buffer,now:number):Case|null{
 /** No disclosure on wrong case, version, token or session. Expiry is exclusive. */
 export function canReview(c:Case,link:Link,token:string,sessionHash:string,now:number):boolean{
  const b=active(c);
- return !!b&&b.status==="pending"&&validBinding(link)&&same(b,link)&&!link.revoked&&digest(token)&&digest(sessionHash)&&digest(link.tokenHash)&&link.sessionHash===sessionHash&&hashBytes(Buffer.from(token))===link.tokenHash&&time(now)&&time(link.issuedAt)&&link.issuedAt>=b.issuedAt&&link.expiresAt===link.issuedAt+LINK_TTL_MS&&now>=link.issuedAt&&now<link.expiresAt;
+ return !!b&&b.status==="pending"&&c.technical==="feasible"&&!!c.technicalBinding&&same(b,c.technicalBinding)&&validBinding(link)&&same(b,link)&&!link.revoked&&digest(token)&&digest(sessionHash)&&digest(link.tokenHash)&&link.sessionHash===sessionHash&&hashBytes(Buffer.from(token))===link.tokenHash&&time(now)&&time(link.issuedAt)&&link.issuedAt>=b.issuedAt&&link.expiresAt===link.issuedAt+LINK_TTL_MS&&now>=link.issuedAt&&now<link.expiresAt;
 }
 /** Authorization to issue/renew is separately established by trusted adapter.
  * Caller must revoke previous link atomically before returning this capability. */
 export function newLink(c:Case,role:Role,authorized:boolean,sessionHash:string,now:number):{link:Link;token:string}|null{
  const b=active(c);
- if(role!=="authorized_issuer"||authorized!==true||!b||b.status!=="pending"||!digest(sessionHash)||!time(now)||now<b.issuedAt)return null;
+ if(role!=="authorized_issuer"||authorized!==true||!b||b.status!=="pending"||c.technical!=="feasible"||!c.technicalBinding||!same(b,c.technicalBinding)||!digest(sessionHash)||!time(now)||now<b.issuedAt)return null;
  const token=randomBytes(32).toString("hex");
  return {token,link:Object.freeze({caseId:b.caseId,version:b.version,digest:b.digest,tokenHash:hashBytes(Buffer.from(token)),sessionHash,issuedAt:now,expiresAt:now+LINK_TTL_MS,revoked:false})};
 }
