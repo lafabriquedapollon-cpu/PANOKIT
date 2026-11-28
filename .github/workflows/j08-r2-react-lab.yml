@@ -69,7 +69,31 @@ jobs:
           done
           if [ "$ready" != true ]; then cat "$RUNNER_TEMP/j08-next.log"; exit 1; fi
           node apps/api/security/j06/bat-react-r2-lab.mjs
-          (cd "$J08_EVIDENCE"; sha256sum *.png j08-r2-report.json > SHA256SUMS; sha256sum -c SHA256SUMS)
+          export J08_D2_REACT_ORIGIN="$J08_REACT_ORIGIN"
+          export J08_D2_EVIDENCE="$J08_EVIDENCE"
+          (
+            test "$(id -u)" -ne 0
+            export J03_ADMISSION="$GITHUB_WORKSPACE/apps/api/dist/j03/industrial-admission.js"
+            export J06_ENGINE="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-lab.js"
+            export J06_PORT="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-pg-lab.js"
+            export J06_HTTP="$GITHUB_WORKSPACE/apps/api/dist/j06/quote-http-lab.js"
+            mkdir -m 700 "$RUNNER_TEMP/j06-pg"
+            cp apps/api/security/j03/industrial-lab.sql apps/api/security/j06/* "$RUNNER_TEMP/j06-pg/"
+            cp apps/api/security/sec01-compose/package-lock.json "$RUNNER_TEMP/j06-pg/"
+            cd "$RUNNER_TEMP/j06-pg"
+            node --input-type=module <<'JS'
+            import fs from 'node:fs';
+            import assert from 'node:assert/strict';
+            const l=JSON.parse(fs.readFileSync('package-lock.json'));
+            assert.equal(l.packages['node_modules/embedded-postgres'].version,'17.12.0-beta.19');
+            assert.equal(l.packages['node_modules/pg'].version,'8.16.3');
+            for(const [name,v] of Object.entries(l.packages)) if(name){assert.equal(new URL(v.resolved).origin,'https://registry.npmjs.org');assert.match(v.integrity,/^sha512-/);}
+            fs.writeFileSync('package.json',JSON.stringify({name:l.name,version:l.version,private:true,dependencies:l.packages[''].dependencies}));
+          JS
+            npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+            node quote-lab.mjs --disposable-lab
+          )
+          (cd "$J08_EVIDENCE"; sha256sum *.png j08-r2-report.json j08-d2a-report.json > SHA256SUMS; sha256sum -c SHA256SUMS)
       - name: Upload isolated evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

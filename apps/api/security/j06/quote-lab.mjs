@@ -717,6 +717,7 @@ try{
    await cbt('F04 non-loopback and cancelled operations make no HTTP request',async()=>{const count=clientCalls;fakeWindow.location=new URL('https://example.invalid');assert.deepEqual(await transport.readBatLabStatus(),{status:'unavailable'});fakeWindow.location=new URL(imageBroker.origin);const abort=new AbortController();abort.abort();assert.deepEqual(await transport.readBatLabPreview(abort.signal),{status:'unavailable'});assert.equal(clientCalls,count);});
   }finally{globalThis.fetch=nativeFetch;if(priorWindow)Object.defineProperty(globalThis,'window',priorWindow);else delete globalThis.window;}
   assert.equal(clientPassed,4);console.log('J08_CLIENT_TRANSPORT_RESULT '+JSON.stringify({passed:clientPassed,failed:0,notRun:0}));
+  const verifyReplacement=async()=>{
  await rtest('V04 replacement prevents fresh visual projection',async()=>{
   assert.equal(await decision(work,13,fixtureDigest,'correction'),true);
   assert.equal(Number(await issue(iss,13)),14);
@@ -725,6 +726,11 @@ try{
   await itest('I04 actual superseded BAT cannot deliver PNG',async()=>{
    const r=await imageCall(imageSession);assert.equal(r.status,403);assert.deepEqual(await r.json(),deniedStatus.body);
   });
+  };
+  if(process.env.J08_D2_REACT_ORIGIN){
+   const {runPgReactD2}=await import('./bat-react-pg-d2a-lab.mjs');
+   await runPgReactD2({broker:imageBroker,binding:rasterCtx,otherSession,previewDigest:projection.previewDigest,replace:verifyReplacement});
+  }else await verifyReplacement();
  }finally{await imageBroker.close();}
  assert.equal(imagePassed,4);console.log('J08_IMAGE_HTTP_RESULT '+JSON.stringify({passed:imagePassed,failed:0,notRun:0}));
  assert.equal(rasterPassed,4);console.log('J08_RASTER_RESULT '+JSON.stringify({passed:rasterPassed,failed:0,notRun:0}));
