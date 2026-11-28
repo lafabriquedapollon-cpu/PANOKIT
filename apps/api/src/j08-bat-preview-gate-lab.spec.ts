@@ -44,3 +44,72 @@ test("J08 N03 preview digest mismatch is rejected before final status",async()=>
  let checks=0;const valid=setup().gate;const b=await imageFixture(async()=>{checks++;return current;},async x=>{const r=await valid(x);return r.status==="ok"?{status:"ok",value:{...r.value,previewDigest:"0".repeat(64)}}:r;});
  try{const r=await b.call();assert.equal(r.status,403);assert.deepEqual(await r.json(),{status:"unavailable",manufacturable:false});assert.equal(checks,0);}finally{await b.broker.close();}
 });
+
+type DecisionPort=Pick<ReturnType<typeof createBatLabAdapter>,"sendOtp"|"confirm"|"refuse">;
+const challengeId="22222222-2222-4222-8222-222222222222";
+const issue={action:"request-otp"},confirm={action:"confirm",explicit:true,locale:"fr",code:"012345"},refuse={action:"refuse",explicit:true,locale:"ar"};
+async function mutationFixture(enabled=true,overrides:Partial<DecisionPort>={},status:StatusAdapter["status"]=async()=>current){
+ const calls:unknown[][]=[];
+ const port:DecisionPort={
+  sendOtp:async(...args)=>{calls.push(["issue",...args]);return {status:"ok",value:{challengeId}};},
+  confirm:async(...args)=>{calls.push(["confirm",...args]);return {status:"ok",value:"approved"};},
+  refuse:async(...args)=>{calls.push(["refuse",...args]);return {status:"ok",value:true};},
+  ...overrides
+ };
+ const broker=await startBatStatusBroker({status},120000,setup().gate,enabled?port:undefined);
+ const session=broker.provision(binding);
+ const headers={origin:broker.origin,"sec-fetch-site":"same-origin","content-type":"application/json",cookie:session.cookie.split(";")[0]};
+ const call=(body:unknown,path="/bat/decision",patch:Record<string,string>={},raw=false)=>fetch(broker.origin+path,{method:"POST",headers:{...headers,...patch},body:raw?String(body):JSON.stringify(body)});
+ const show=async(patch:Record<string,string>={})=>{const r=await call({},"/bat/preview",patch);assert.equal(r.status,200);assert.deepEqual(Buffer.from(await r.arrayBuffer()),fixture);};
+ const deny=async(r:Response,status=403)=>{assert.equal(r.status,status);assert.deepEqual(await r.json(),{status:"unavailable",manufacturable:false});};
+ const result=async(r:Response,value:string)=>{assert.equal(r.status,200);assert.equal(r.headers.get("cache-control"),"no-store");assert.deepEqual(await r.json(),{scope:"LAB",manufacturable:false,version:1,result:value});};
+ return {broker,session,headers,call,show,deny,result,calls};
+}
+test("J08 M2-01 default broker stays read-only even after verified preview",async()=>{
+ const f=await mutationFixture(false);try{await f.show();await f.deny(await f.call(issue));assert.equal(f.calls.length,0);}finally{await f.broker.close();}
+});
+test("J08 M2-02 requires verified preview of same provisioned cookie",async()=>{
+ const f=await mutationFixture();try{
+  await f.deny(await f.call(issue));await f.show();
+  const second=f.broker.provision(binding),cookie=second.cookie.split(";")[0];
+  await f.deny(await f.call(issue,"/bat/decision",{cookie}));
+  assert.equal(f.calls.length,0);
+  await f.result(await f.call(issue),"otp-sent");
+ }finally{await f.broker.close();}
+});
+test("J08 M2-03 origin, media type, cookie, route and ambiguous JSON rejected",async()=>{
+ const f=await mutationFixture();try{await f.show();
+  for(const patch of [{origin:"http://evil.invalid"},{"sec-fetch-site":"cross-site"},{cookie:""},{"content-type":"text/plain"},{"content-encoding":"gzip"},{cookie:f.headers.cookie+"; "+f.headers.cookie}])await f.deny(await f.call(issue,"/bat/decision",patch));
+  await f.deny(await f.call(issue,"/bat/decision?x=1"));
+  await f.deny(await f.call('{"action":"refuse","action":"request-otp"}',"/bat/decision",{},true),400);
+  await f.deny(await f.call("x".repeat(257),"/bat/decision",{},true),413);
+  await f.deny(await f.call({...issue,digest:binding.expectedDigest}));
+  await f.deny(await f.call({...refuse,explicit:false}));
+  assert.equal(f.calls.length,0);
+ }finally{await f.broker.close();}
+});
+test("J08 M2-04 confirmation and replay use only server-bound context",async()=>{
+ const f=await mutationFixture();try{await f.show();
+  await f.deny(await f.call(confirm));await f.result(await f.call(issue),"otp-sent");
+  await f.deny(await f.call(issue));await f.result(await f.call(confirm),"approved");
+  await f.deny(await f.call(confirm));await f.deny(await f.call(refuse));
+  const context={caseId:binding.caseId,version:binding.version,linkToken:binding.linkToken,digest:binding.expectedDigest};
+  assert.deepEqual(f.calls,[["issue",context,binding.sourceSession],["confirm",{...context,challengeId,code:"012345",statement:"lab-bat-v1",locale:"fr"},binding.sourceSession]]);
+ }finally{await f.broker.close();}
+});
+test("J08 M2-05 refusal is explicit and terminal",async()=>{
+ const f=await mutationFixture();try{await f.show();await f.result(await f.call(refuse),"refused");await f.deny(await f.call(issue));assert.equal(f.calls.length,1);}finally{await f.broker.close();}
+});
+test("J08 M2-06 revoked in-flight session suppresses acknowledgement; parallel denied",async()=>{
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>release=r),started=new Promise<void>(r=>entered=r);
+ const f=await mutationFixture(true,{sendOtp:async()=>{entered();await gate;return {status:"ok",value:{challengeId}};}});
+ try{await f.show();const pending=f.call(issue);await started;await f.deny(await f.call(refuse));f.session.revoke();release();await f.deny(await pending);await f.deny(await f.call(confirm));}finally{release();await f.broker.close();}
+});
+test("J08 M2-07 unsuccessful preview does not unlock decisions",async()=>{
+ const f=await mutationFixture(true,{},async()=>({status:"ok",value:{...current.value,status:"replaced"}}));
+ try{await f.deny(await f.call({},"/bat/preview"));await f.deny(await f.call(issue));assert.equal(f.calls.length,0);}finally{await f.broker.close();}
+});
+test("J08 M2-08 missing decision preview port rejected at startup",async()=>{
+ const fake:DecisionPort={sendOtp:async()=>({status:"unavailable"}),confirm:async()=>({status:"unavailable"}),refuse:async()=>({status:"unavailable"})};
+ await assert.rejects(startBatStatusBroker({status:async()=>current},120000,undefined,fake),/LAB_DECISION_PREVIEW/);
+});
