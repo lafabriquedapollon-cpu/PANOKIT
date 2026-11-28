@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,indu
 const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client','j08_otp_sender'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,otpPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client','j08_otp_sender','j08_commercial_fixture','j08_gate_reader'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,otpPassed=0,gatePassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -25,6 +25,7 @@ async function vtest(name,fn){await fn();vPassed++;console.log('J07_VISUAL '+JSO
 async function j08test(name,fn){await fn();j08Passed++;console.log('J08_PG '+JSON.stringify({name,status:'PASS'}));}
 async function linktest(name,fn){await fn();linkPassed++;console.log('J08_LINK '+JSON.stringify({name,status:'PASS'}));}
 async function otptest(name,fn){await fn();otpPassed++;console.log('J08_OTP '+JSON.stringify({name,status:'PASS'}));}
+async function gatetest(name,fn){await fn();gatePassed++;console.log('J08_GATE '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -42,7 +43,7 @@ try{
  await boot.query('create database '+db);
  for(const role of roles){creds[role]=randomBytes(32).toString('hex');await boot.query("create role "+role+" login password '"+creds[role]+"' nosuperuser nocreatedb nocreaterole noreplication nobypassrls");}
  admin=await connect('postgres',pw);await admin.query('revoke connect,temporary on database '+db+' from public');await admin.query('grant connect on database '+db+' to '+roles.join(','));await admin.query('revoke create on schema public from public');
- await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-link-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-otp-lab.sql',import.meta.url),'utf8'));
+ await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-link-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-otp-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-gate-lab.sql',import.meta.url),'utf8'));
  [editor,approver,revoker,runtime,outsider,ie,ia,ir]=await Promise.all(['j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j03_editor','j03_approver','j03_revoker'].map(login));
  listener=await startQuoteHttpLab(adapter);
  await test('B01 empty industrial fails closed',async()=>{assert.equal((await calc(request)).reason,'industrial_unavailable');});
@@ -482,6 +483,78 @@ try{
   assert.equal(await scalar(admin,"select count(*)::int from j08_private.otp_events where event='approved'"),1);
   assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_expirations'),1);
  });
+ const [gateClient,gateSender,gateIssuer,gateWorkshop,commercial,gateReader]=await Promise.all(['j08_client','j08_otp_sender','j08_issuer','j08_workshop_a','j08_commercial_fixture','j08_gate_reader'].map(login));
+ const status=(c,k,v,cap=sourceSession,id=activeBatCase)=>tx(c,'select j08_private.read_status($1,$2,$3,$4)',[id,v,cap,k]);
+ const fixture=(c,v,event,d=archiveDigest)=>tx(c,'select j08_private.record_commercial_fixture($1,$2,$3,$4)',[activeBatCase,v,d,event]);
+ const gate=(c,v,d=archiveDigest)=>tx(c,'select j08_private.read_fixture_eligibility($1,$2,$3)',[activeBatCase,v,d]);
+ const expectedGate=eligible=>({scope:'LAB',fixtureEligible:eligible,manufacturable:false});
+ const advance=async v=>{assert.equal(await decision(gateWorkshop,v-1,archiveDigest,'correction'),true);assert.equal(Number(await issue(gateIssuer,v-1)),v);assert.equal(await decision(gateWorkshop,v,archiveDigest,'feasible'),true);const k=linkHash();assert.equal(await rotate(gateIssuer,k,v),true);return k;};
+ const approve=async(k,v)=>{const p=code(),q=await otpIssue(gateSender,k,v,p);assert.ok(q);assert.equal(await confirm(gateClient,k,v,q,p),'approved');};
+ let k7,k8;
+ await gatetest('E01 separation of client, commercial fixture and gate roles',async()=>{
+  for(const c of [gateClient,gateSender,gateIssuer,gateWorkshop,commercial,gateReader]){
+   await denied(()=>c.query('select * from j08_private.commercial_fixture_events'));
+   await denied(()=>c.query('delete from j08_private.commercial_fixture_events'));
+  }
+  await denied(()=>gate(commercial,6));await denied(()=>gate(gateWorkshop,6));await denied(()=>fixture(gateReader,6,'verified_fixture'));
+  await denied(()=>fixture(gateClient,6,'verified_fixture'));await denied(()=>status(gateReader,k6,6));
+ });
+ await gatetest('E02 status is minimal and context-bound, replaced never exposes bytes',async()=>{
+  const r=await status(gateClient,k6,6);assert.deepEqual(r,{scope:'LAB',manufacturable:false,version:6,status:'review'});
+  assert.equal(await status(gateClient,k6,6,wrongSession),null);
+  assert.equal(await status(gateClient,linkHash(),6),null);
+  assert.equal(await status(gateClient,k6,6,sourceSession,'44444444-4444-4444-8444-444444444444'),null);
+  assert.equal(await status(gateClient,l1,2),null);
+  assert.equal((await status(gateClient,k4,4)).status,'replaced');
+  assert.equal(await readBat(gateClient,k4,4),null);
+ });
+ await gatetest('E03 no commercial fixture or eligibility for pending or stale version',async()=>{
+  assert.equal(await fixture(commercial,6,'verified_fixture'),false);
+  assert.deepEqual(await gate(gateReader,6),expectedGate(false));
+  assert.deepEqual(await gate(gateReader,2),expectedGate(false));
+  assert.equal(await fixture(commercial,2,'verified_fixture'),false);
+ });
+ await gatetest('E04 exact approved BAT status and independent fixture proof',async()=>{
+  k7=await advance(7);await approve(k7,7);
+  assert.deepEqual(await status(gateClient,k7,7),{scope:'LAB',manufacturable:false,version:7,status:'approved'});
+  assert.equal(await readBat(gateClient,k7,7),null);
+  assert.deepEqual(await gate(gateReader,7),expectedGate(false));
+  assert.equal(await fixture(commercial,7,'verified_fixture','0'.repeat(64)),false);
+  assert.equal(await fixture(commercial,7,'verified_fixture'),true);
+  assert.equal(await fixture(commercial,7,'verified_fixture'),false);
+  assert.deepEqual(await gate(gateReader,7),expectedGate(true));
+  assert.deepEqual(await gate(gateReader,7,'0'.repeat(64)),expectedGate(false));
+ });
+ await gatetest('E05 stale serializable snapshot fails after fixture withdrawal',async()=>{
+  await gateReader.query('begin isolation level serializable');
+  try{
+   await scalar(gateReader,'select 1 from pg_catalog.pg_class limit 1');
+   assert.equal(await fixture(commercial,7,'withdrawn_fixture'),true);
+   await assert.rejects(()=>scalar(gateReader,'select j08_private.read_fixture_eligibility($1,$2,$3)',[activeBatCase,7,archiveDigest]),e=>e.code==='40001');
+  }finally{await gateReader.query('rollback');}
+  assert.deepEqual(await gate(gateReader,7),expectedGate(false));
+  assert.equal(await fixture(commercial,7,'verified_fixture'),false);
+ });
+ await gatetest('E06 correction, new version and business expiry deny previous eligibility',async()=>{
+  k8=await advance(8);
+  assert.equal((await status(gateClient,k7,7)).status,'replaced');
+  await approve(k8,8);
+  assert.equal(await fixture(commercial,8,'verified_fixture'),true);
+  assert.deepEqual(await gate(gateReader,8),expectedGate(true));
+  assert.equal(await expire(gateIssuer,8),true);
+  assert.equal((await status(gateClient,k8,8)).status,'expired');
+  assert.deepEqual(await gate(gateReader,8),expectedGate(false));
+  assert.deepEqual(await gate(gateReader,7),expectedGate(false));
+ });
+ await gatetest('E07 persistence and no manufacturing grant after restart',async()=>{
+  for(const c of [...clients])await close(c);await pg.stop();started=false;await pg.start();started=true;admin=await connect('postgres',pw);
+  const c=await login('j08_client'),g=await login('j08_gate_reader');
+  assert.equal((await status(c,k8,8)).status,'expired');
+  assert.deepEqual(await gate(g,8),expectedGate(false));
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.commercial_fixture_events'),3);
+  assert.ok(Number(await scalar(admin,'select security_revision from j08_private.cases'))>0);
+ });
+ assert.equal(gatePassed,7);console.log('J08_GATE_RESULT '+JSON.stringify({passed:gatePassed,failed:0,notRun:0}));
  assert.equal(otpPassed,11);console.log('J08_OTP_RESULT '+JSON.stringify({passed:otpPassed,failed:0,notRun:0}));
  assert.equal(linkPassed,9);console.log('J08_LINK_RESULT '+JSON.stringify({passed:linkPassed,failed:0,notRun:0}));
  assert.equal(j08Passed,8);console.log('J08_PG_RESULT '+JSON.stringify({passed:j08Passed,failed:0,notRun:0}));
