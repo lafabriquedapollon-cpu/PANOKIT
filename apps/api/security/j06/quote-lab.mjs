@@ -691,6 +691,32 @@ try{
    const noImage=await imageCall(imageBroker.provision(statusOnly));assert.equal(noImage.status,403);assert.deepEqual(await noImage.json(),deniedStatus.body);
    const revoked=imageBroker.provision(rasterCtx);revoked.revoke();const r=await imageCall(revoked);assert.equal(r.status,403);assert.deepEqual(await r.json(),deniedStatus.body);
   });
+  // Exercise the exact frontend transport in Node with a browser boundary shim.
+  // This is not a Playwright/browser or visual proof.
+  const webRoot=join(process.env.J06_PORT,'../../../../web');
+  const ts=createRequire(join(webRoot,'package.json'))('typescript');
+  const source=readFileSync(join(webRoot,'src/lib/j08/bat-lab-transport.ts'),'utf8');
+  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+  const transport=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  const nativeFetch=globalThis.fetch,priorWindow=Object.getOwnPropertyDescriptor(globalThis,'window');
+  let clientPassed=0,clientCalls=0,tamper=false;
+  const cbt=async(name,fn)=>{await fn();clientPassed++;console.log('J08_CLIENT_TRANSPORT '+JSON.stringify({name,status:'PASS'}));};
+  const fakeWindow={location:new URL(imageBroker.origin)};
+  Object.defineProperty(globalThis,'window',{value:fakeWindow,configurable:true});
+  globalThis.fetch=async(path,init)=>{
+   clientCalls++;
+   assert.ok(['/bat/status','/bat/preview'].includes(path));assert.equal(init.method,'POST');assert.equal(init.body,'{}');assert.equal(init.credentials,'same-origin');assert.equal(init.redirect,'error');assert.equal(init.cache,'no-store');
+   const r=await nativeFetch(imageBroker.origin+path,{...init,headers:{...init.headers,origin:imageBroker.origin,'sec-fetch-site':'same-origin',cookie:imageSession.cookie.split(';')[0]}});
+   if(!tamper||path!=='/bat/preview')return r;
+   const headers=new Headers(r.headers);headers.set('x-bat-preview-sha256','0'.repeat(64));return new Response(await r.arrayBuffer(),{status:r.status,headers});
+  };
+  try{
+   await cbt('F01 exact frontend transport reads authoritative status',async()=>{assert.deepEqual(await transport.readBatLabStatus(),{status:'ok',value:{scope:'LAB',manufacturable:false,version:13,status:'review'}});});
+   await cbt('F02 frontend verifies PNG bytes and digest',async()=>{const r=await transport.readBatLabPreview();assert.equal(r.status,'ok');assert.equal(r.value.blob.type,'image/png');assert.equal(r.value.sourceDigest,fixtureDigest);assert.equal(r.value.previewDigest,projection.previewDigest);assert.deepEqual(Buffer.from(await r.value.blob.arrayBuffer()),Buffer.from(projection.pngBase64,'base64'));});
+   await cbt('F03 frontend rejects tampered digest',async()=>{tamper=true;try{assert.deepEqual(await transport.readBatLabPreview(),{status:'unavailable'});}finally{tamper=false;}});
+   await cbt('F04 non-loopback and cancelled operations make no HTTP request',async()=>{const count=clientCalls;fakeWindow.location=new URL('https://example.invalid');assert.deepEqual(await transport.readBatLabStatus(),{status:'unavailable'});fakeWindow.location=new URL(imageBroker.origin);const abort=new AbortController();abort.abort();assert.deepEqual(await transport.readBatLabPreview(abort.signal),{status:'unavailable'});assert.equal(clientCalls,count);});
+  }finally{globalThis.fetch=nativeFetch;if(priorWindow)Object.defineProperty(globalThis,'window',priorWindow);else delete globalThis.window;}
+  assert.equal(clientPassed,4);console.log('J08_CLIENT_TRANSPORT_RESULT '+JSON.stringify({passed:clientPassed,failed:0,notRun:0}));
  await rtest('V04 replacement prevents fresh visual projection',async()=>{
   assert.equal(await decision(work,13,fixtureDigest,'correction'),true);
   assert.equal(Number(await issue(iss,13)),14);
