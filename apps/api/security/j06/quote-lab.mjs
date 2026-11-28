@@ -635,9 +635,9 @@ try{
    browser.revoke();assert.deepEqual(await requestStatus(browser),deniedStatus);
   });
  }finally{await broker.close();}
- const {fixtureSource,fixtureDigest,rasterizePinnedFixture}=await import('./bat-raster-fixture-lab.mjs');
+ const {fixtureSource,fixtureDigest,rasterizePinnedFixture,loadFixtureSharp}=await import('./bat-raster-fixture-lab.mjs');
  const {createBatPreviewGate}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-preview-gate-lab.js'));
- const sharp=createRequire(new URL('../../../web/package.json',import.meta.url))('sharp');
+ const sharp=loadFixtureSharp();
  let rasterPassed=0,rasterCtx,projection,renderCalls=0;
  const rtest=async(name,fn)=>{await fn();rasterPassed++;console.log('J08_RASTER '+JSON.stringify({name,status:'PASS'}));};
  const previewGate=createBatPreviewGate(batAdapter,[fixtureDigest],async source=>{renderCalls++;return rasterizePinnedFixture(source);});
