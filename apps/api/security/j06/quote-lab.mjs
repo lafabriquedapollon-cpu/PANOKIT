@@ -596,6 +596,46 @@ try{
   assert.deepEqual(await ambiguous.sendOtp({...next,digest:archiveDigest},session),{status:'unavailable'});
   assert.equal(fakeMessages.length,1);assert.deepEqual(await series(10),{attempts:0,issued_count:1});
  });
+ const {startBatStatusBroker}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-status-broker-lab.js'));
+ const broker=await startBatStatusBroker(batAdapter);
+ let brokerPassed=0,liveCtx,browser;
+ const btest=async(name,fn)=>{await fn();brokerPassed++;console.log('J08_BROKER '+JSON.stringify({name,status:'PASS'}));};
+ const requestStatus=async(s,body='{}')=>{
+  const r=await fetch(broker.origin+'/bat/status',{method:'POST',headers:{origin:broker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0]},body});
+  return {code:r.status,body:await r.json(),cache:r.headers.get('cache-control')};
+ };
+ const expectedStatus=(version,status)=>({code:200,body:{scope:'LAB',manufacturable:false,version,status},cache:'no-store'});
+ const deniedStatus={code:403,body:{status:'unavailable',manufacturable:false},cache:'no-store'};
+ try{
+  await btest('H01 real HTTP broker reads current BAT from PG17 with minimal projection',async()=>{
+   assert.equal(await decision(work,10,archiveDigest,'correction'),true);assert.equal(Number(await issue(iss,10)),11);assert.equal(await decision(work,11,archiveDigest,'feasible'),true);
+   const r=await batAdapter.rotate({caseId:activeBatCase,version:11,digest:archiveDigest},session);assert.equal(r.status,'ok');
+   liveCtx={caseId:activeBatCase,version:11,linkToken:r.value.linkToken};
+   browser=broker.provision({...liveCtx,sourceSession:session});
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'review'));
+  });
+  await btest('H02 real SQL refuses wrong session and token; browser cannot select context',async()=>{
+   for(const binding of [{...liveCtx,sourceSession:otherSession},{...liveCtx,sourceSession:session,linkToken:randomBytes(32).toString('hex')}])assert.deepEqual(await requestStatus(broker.provision(binding)),deniedStatus);
+   const injected=await requestStatus(browser,JSON.stringify({caseId:'x'}));assert.equal(injected.code,400);assert.deepEqual(injected.body,deniedStatus.body);
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'review'));
+  });
+  await btest('H03 token rotation revokes old browser binding; committed approval is visible',async()=>{
+   const r=await batAdapter.rotate({caseId:activeBatCase,version:11,digest:archiveDigest},session);assert.equal(r.status,'ok');
+   assert.deepEqual(await requestStatus(browser),deniedStatus);
+   liveCtx={...liveCtx,linkToken:r.value.linkToken};browser=broker.provision({...liveCtx,sourceSession:session});
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'review'));
+   const otp=await batAdapter.sendOtp({...liveCtx,digest:archiveDigest},session);assert.equal(otp.status,'ok');assert.equal(fakeMessages.length,2);
+   assert.deepEqual(await batAdapter.confirm({...liveCtx,digest:archiveDigest,challengeId:otp.value.challengeId,code:fakeMessages[1].code,statement:'lab-bat-v1',locale:'fr'},session),{status:'ok',value:'approved'});
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'approved'));
+   assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_decisions where version=11'),1);
+  });
+  await btest('H04 replaced BAT exposes no bytes and revoked browser cannot read status',async()=>{
+   assert.equal(await decision(work,11,archiveDigest,'correction'),true);assert.equal(Number(await issue(iss,11)),12);
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'replaced'));
+   browser.revoke();assert.deepEqual(await requestStatus(browser),deniedStatus);
+  });
+ }finally{await broker.close();}
+ assert.equal(brokerPassed,4);console.log('J08_BROKER_RESULT '+JSON.stringify({passed:brokerPassed,failed:0,notRun:0}));
  assert.equal(adapterPassed,4);console.log('J08_ADAPTER_RESULT '+JSON.stringify({passed:adapterPassed,failed:0,notRun:0}));
  assert.equal(gatePassed,7);console.log('J08_GATE_RESULT '+JSON.stringify({passed:gatePassed,failed:0,notRun:0}));
  assert.equal(otpPassed,11);console.log('J08_OTP_RESULT '+JSON.stringify({passed:otpPassed,failed:0,notRun:0}));
