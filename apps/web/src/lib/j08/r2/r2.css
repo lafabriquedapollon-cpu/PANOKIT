@@ -151,3 +151,21 @@
 .j08-lab h1,.j08-lab h2{font-weight:700}
 .j08-fixture-note{margin:0;padding:8px 16px;background:#f8f6f2;color:#515658;border-bottom:1px solid #e5e1dc;font:700 12px/1.45 Arial,"Noto Sans Arabic",sans-serif;text-align:center}
 .j08-lab .runtime-refresh{cursor:pointer;min-height:48px}
+
+/* D2-C: integrated read-only controls. No fixture or mutation styles changed. */
+.j08-lab[data-mode=live] .runtime-status{max-width:none;padding:0;background:#fff;border-bottom:1px solid var(--line)}
+.j08-lab[data-mode=live] .runtime-inner{max-width:1180px;margin:auto;padding:10px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.j08-lab[data-mode=live] .runtime-message{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.j08-lab[data-mode=live] .runtime-lock{flex:none;color:#8e3900;margin-top:2px}
+.j08-lab[data-mode=live] .runtime-message strong{display:block;font-size:14px;font-weight:700;line-height:1.4}
+.j08-lab[data-mode=live] .runtime-message p{font-size:12px;color:var(--muted);line-height:1.4;margin:2px 0 0}
+.j08-lab[data-mode=live] .runtime-refresh{width:auto;flex:none;margin:0;padding:9px 14px;min-height:48px;font-size:14px;line-height:1.35;border-color:#d7d1c9;background:#fff;color:#303638}
+.j08-lab[data-mode=live] .runtime-refresh:hover:not([aria-disabled=true]){background:#fff1e3;border-color:#a74300;color:#8e3900}
+.j08-lab[data-mode=live] .runtime-refresh[aria-disabled=true]{cursor:wait;color:var(--muted);background:#f8f6f2}
+.j08-lab[data-mode=live] .runtime-refresh svg{flex:none}
+.j08-lab[data-mode=live] .runtime-preview-note{max-width:760px;margin:0 auto 14px;padding:0 16px;color:var(--muted);font-size:13px}
+.j08-lab[data-mode=live] .runtime-pending{min-height:240px}
+.j08-lab[data-mode=live] .preview:has(.verified-image){margin-bottom:16px}
+@media(max-width:760px){.j08-lab[data-mode=live] .runtime-inner{padding:10px 16px;gap:8px;flex-wrap:wrap}.j08-lab[data-mode=live] .runtime-message{flex:1 1 180px}.j08-lab[data-mode=live] .runtime-refresh{max-width:none;flex:0 0 auto}.j08-lab[data-mode=live] .runtime-message p{font-size:12px}}
+@media(max-width:480px){.j08-lab[data-mode=live] .runtime-inner{display:grid;grid-template-columns:minmax(0,1fr)}.j08-lab[data-mode=live] .runtime-refresh{justify-self:start;width:auto}}
+@media(max-width:350px){.j08-lab[data-mode=live] .runtime-inner{padding-inline:12px}}

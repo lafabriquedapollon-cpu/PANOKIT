@@ -33,9 +33,16 @@ async function setup(lang,width,session,fixture){
 async function layout(p,key,lang){
  const root=p.getByTestId('j08-r2');
  check(key+'/locale',await root.getAttribute('dir')===(lang==='ar'?'rtl':'ltr')&&await root.getAttribute('lang')===lang);
- const m=await p.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,h1:document.querySelectorAll('[data-testid=j08-r2] h1').length,enabled:[...document.querySelectorAll('[data-testid=j08-r2] button,[data-testid=j08-r2] input,[data-testid=j08-r2] textarea')].filter(x=>!x.disabled).length}));
+ const m=await p.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,h1:document.querySelectorAll('[data-testid=j08-r2] h1').length,enabled:[...document.querySelectorAll('[data-testid=j08-r2] button,[data-testid=j08-r2] input,[data-testid=j08-r2] textarea')].filter(x=>!x.disabled&&!x.matches('.runtime-refresh')).length}));
  check(key+'/layout',m.scroll<=m.width+1&&m.h1===1);check(key+'/no-actions',m.enabled===0);
  const weights=await root.locator('h1,h2').evaluateAll(nodes=>nodes.map(n=>Number(getComputedStyle(n).fontWeight)));check(key+'/approved-heading-weight',weights.length>0&&weights.every(w=>w>=700));
+ const live=await root.getAttribute('data-mode')==='live';
+ const bar=p.getByTestId('j08-runtime-toolbar');
+ if(live){
+  const m=await bar.evaluate(el=>{const b=el.querySelector('button'),r=b.getBoundingClientRect(),header=el.previousElementSibling,main=el.nextElementSibling;return {height:r.height,bottom:r.bottom,viewport:innerHeight,position:header?.tagName==='HEADER'&&main?.tagName==='MAIN',enabled:!b.disabled&&b.getAttribute('aria-disabled')==='false',count:el.querySelectorAll('button').length};});
+  check(key+'/toolbar-placement',m.position&&m.bottom<=m.viewport);
+  check(key+'/toolbar-single-target',m.count===1&&m.enabled&&m.height>=48);
+ }else check(key+'/no-runtime-toolbar-in-fixture',await bar.count()===0);
 }
 try{
  // Explicit static gallery is independent from live state: no broker capability provisioned.
@@ -47,13 +54,13 @@ try{
   }
   check(lang+'/'+width+'/fixture-no-broker',requests===0);await ctx.close();
  }
- for(const lang of ['fr','ar'])for(const width of [390,1440]){
+ for(const lang of ['fr','ar'])for(const width of [320,390,768,1440]){
   status='review';const session=broker.provision(binding),{ctx,p}=await setup(lang,width,session);const key='live-'+lang+'-'+width;
   await state(p,'review');await p.locator('img.verified-image').waitFor();await p.waitForFunction(()=>{const i=document.querySelector('img.verified-image');return i?.complete&&i.naturalWidth===64&&i.naturalHeight===32;});
   await layout(p,key,lang);check(key+'/real-png',await p.locator('img.verified-image').getAttribute('src').then(x=>x?.startsWith('blob:')));check(key+'/no-synthetic',await p.locator('[data-preview] svg').count()===0&&!((await p.locator('body').innerText()).includes('LAB-008')));
-  check(key+'/cookie',await p.evaluate(()=>document.cookie===''&&localStorage.length===0&&sessionStorage.length===0));await capture(p,key+'-review');
-  for(const next of ['waiting','approved','refused','expired','replaced','locked']){status=next;await p.locator('.runtime-refresh').click();await state(p,next);check(key+'/'+next+'/no-image',await p.locator('[data-preview],img.verified-image').count()===0);await layout(p,key+'/'+next,lang);}
-  status='review';await p.locator('.runtime-refresh').click();await state(p,'review');await p.locator('img.verified-image').waitFor();session.revoke();await p.locator('.runtime-refresh').click();await state(p,'unavailable');check(key+'/revoked',await p.locator('[data-preview],img.verified-image').count()===0);await capture(p,key+'-revoked');await ctx.close();
+  check(key+'/cookie',await p.evaluate(()=>document.cookie===''&&localStorage.length===0&&sessionStorage.length===0));if(width===390||width===1440)await capture(p,key+'-review');
+  for(const next of ['waiting','approved','refused','expired','replaced','locked']){status=next;const refresh=p.locator('.runtime-refresh');await refresh.focus();await p.keyboard.press('Enter');await state(p,next);check(key+'/'+next+'/keyboard-focus',await refresh.evaluate(b=>document.activeElement===b));check(key+'/'+next+'/no-image',await p.locator('[data-preview],img.verified-image').count()===0);await layout(p,key+'/'+next,lang);}
+  status='review';await p.locator('.runtime-refresh').click();await state(p,'review');await p.locator('img.verified-image').waitFor();session.revoke();await p.locator('.runtime-refresh').click();await state(p,'unavailable');check(key+'/revoked',await p.locator('[data-preview],img.verified-image').count()===0);if(width===390||width===1440)await capture(p,key+'-revoked');await ctx.close();
  }
  const before=reads,{ctx,p}=await setup('fr',390);await state(p,'unavailable');check('foreign/no-preview',await p.locator('[data-preview]').count()===0&&reads===before);await ctx.close();
  check('captures',captures.length===64);

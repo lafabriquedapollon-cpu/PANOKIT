@@ -23,15 +23,41 @@ function renderNode(n:ScreenNode,key:string,lang:Lang,d:Display):ReactNode {
  if(live&&n.t==='section'&&d.state?.status==='approved'&&n.c?.some(x=>typeof x!=='string'&&Object.hasOwn(x.a??{},'data-preview')))return null;
  if(live&&n.t==='bdi'&&n.c?.every(x=>typeof x==='string')&&/^V\d+$/.test(n.c.join('')))return d.state&&!closed.has(d.state.status)?<bdi key={key}>V{String(d.state.version).padStart(2,'0')}</bdi>:null;
  const props:Record<string,unknown>={...a,key};
+ // The live toolbar is the only usable control; remove duplicate status-only CTAs.
+ if(live&&n.t==='button'&&d.state&&['waiting','approved','refused'].includes(d.state.status))return null;
  if(n.t==='button'||n.t==='input'||n.t==='textarea'||n.t==='fieldset')props.disabled=true;
  if(live&&d.state?.status==='approved'&&cls.includes('layout'))props.className='layout single';
  const children=n.c?.map((x,i)=>renderNode(x,`${key}-${i}`,lang,d))??[];
  return createElement(n.t,props,...children);
 }
-function Screen({id,lang,display}:{id:string;lang:Lang;display:Display}){
+const runtimeCopy={
+ fr:{title:'Consultation en lecture seule',detail:'Validation, refus, renouvellement et fabrication indisponibles dans le LAB.',footer:'© PANOKIT · Consultation LAB',privacy:'Aucune opération réelle'},
+ ar:{title:'عرض للقراءة فقط',detail:'الموافقة والرفض والتجديد والتصنيع غير متاحة في بيئة الاختبار.',footer:'© PANOKIT · عرض تجريبي',privacy:'لا عمليات حقيقية'}
+};
+function RuntimeToolbar({lang,pending,refresh}:{lang:Lang;pending:boolean;refresh:()=>void}){
+ const label=runtimeCopy[lang];
+ return <section className="runtime-status" aria-label={label.title} data-testid="j08-runtime-toolbar">
+  <div className="runtime-inner">
+   <div className="runtime-message">
+    <svg className="runtime-lock" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+    <div><strong>{label.title}</strong><p>{label.detail}</p></div>
+   </div>
+   <button type="button" className="button secondary runtime-refresh" aria-disabled={pending} onClick={()=>{if(!pending)refresh();}}>
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0-2 6"/><path d="M20 4v7h-7"/></svg>{copy[lang].refresh}
+   </button>
+  </div>
+ </section>;
+}
+function Screen({id,lang,display,runtime}:{id:string;lang:Lang;display:Display;runtime?:ReactNode}){
  const source=screens[`${id}-${lang}`]??screens[`11-invalide-${lang}`];
  return <div className="j08-lab" lang={lang} dir={lang==='ar'?'rtl':'ltr'} data-testid="j08-r2" data-mode={display.kind} data-state={display.kind==='live'?(display.pending?'loading':display.state?.status??'unavailable'):id}>
-  {source.map((node,i)=>renderNode(node,`${id}-${i}`,lang,display))}
+  {display.kind==='fixture'?source.map((node,i)=>renderNode(node,`${id}-${i}`,lang,display)):<>
+   {source.filter(n=>typeof n!=='string'&&n.t==='header').map((n,i)=>renderNode(n,`header-${i}`,lang,display))}
+   {runtime}
+   {display.pending?<main className="shell runtime-pending" role="status" data-testid="j08-pending"><h1>{copy[lang].loading}</h1></main>:source.filter(n=>typeof n!=='string'&&n.t==='main').map((n,i)=>renderNode(n,`${id}-main-${i}`,lang,display))}
+   {display.state?.status==='approved'&&<p className="runtime-preview-note">{copy[lang].noPreview}</p>}
+   <footer className="footer"><span>{runtimeCopy[lang].footer}</span><span>{runtimeCopy[lang].privacy}</span></footer>
+  </>}
  </div>;
 }
 /** Explicitly separate fixture review. Never import this component into a public page. */
@@ -85,8 +111,5 @@ export function BatR2ReadOnly({lang}:{lang:Lang}){
  const pending=visible&&!current;
  const state=current?.state;
  const id=state?mapping[state.status]:'11-invalide';
- return <div className="j08-lab" lang={lang} dir={lang==='ar'?'rtl':'ltr'}>
-  {pending?<main className="shell" role="status" data-testid="j08-pending"><h1>{copy[lang].loading}</h1></main>:<Screen id={id} lang={lang} display={{kind:'live',state,url:current?.url,pending:false}}/>}
-  <section className="runtime-status"><p className="runtime-note">{copy[lang].readonly}</p>{state?.status==='approved'&&<p className="runtime-note">{copy[lang].noPreview}</p>}<button type="button" className="button secondary runtime-refresh" onClick={refresh}>{copy[lang].refresh}</button></section>
- </div>;
+ return <Screen id={id} lang={lang} display={{kind:'live',state,url:current?.url,pending}} runtime={<RuntimeToolbar lang={lang} pending={pending} refresh={refresh}/>}/>;
 }

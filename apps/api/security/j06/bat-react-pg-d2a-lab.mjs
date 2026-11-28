@@ -33,12 +33,14 @@ export async function runPgReactD2({broker,binding,otherSession,previewDigest,re
     const root=document.querySelector('[data-testid=j08-r2]'),i=root.querySelector('img.verified-image');
     const bytes=await (await fetch(i.src)).arrayBuffer();
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
-    return {digest,dir:root.dir,lang:root.lang,version:[...root.querySelectorAll('bdi')].map(x=>x.textContent),width:innerWidth,scroll:document.documentElement.scrollWidth,cookie:document.cookie,storage:localStorage.length+sessionStorage.length,actions:[...root.querySelectorAll('button,input,textarea')].filter(x=>!x.disabled).length};
+    return {digest,dir:root.dir,lang:root.lang,version:[...root.querySelectorAll('bdi')].map(x=>x.textContent),width:innerWidth,scroll:document.documentElement.scrollWidth,cookie:document.cookie,storage:localStorage.length+sessionStorage.length,actions:[...root.querySelectorAll('button,input,textarea')].filter(x=>!x.disabled&&!x.matches('.runtime-refresh')).length};
    });
    check(key+'/pg-exact-png',facts.digest===previewDigest);
    check(key+'/version',facts.version.includes('V'+String(binding.version).padStart(2,'0')));
    check(key+'/layout',facts.width+1>=facts.scroll&&facts.lang===lang&&facts.dir===(lang==='ar'?'rtl':'ltr'));
    check(key+'/readonly-and-private',facts.actions===0&&facts.cookie===''&&facts.storage===0);
+   const toolbar=await p.getByTestId('j08-runtime-toolbar').evaluate(el=>{const b=el.querySelector('button'),r=b.getBoundingClientRect();return {height:r.height,bottom:r.bottom,viewport:innerHeight,position:el.previousElementSibling?.tagName==='HEADER'&&el.nextElementSibling?.tagName==='MAIN',count:el.querySelectorAll('button').length};});
+   check(key+'/toolbar',toolbar.position&&toolbar.count===1&&toolbar.height>=48&&toolbar.bottom<=toolbar.viewport);
    await capture(p,key+'-review');active.push({key,p,ctx,session});
   }
   for(const [key,session] of [['no-cookie',undefined],['wrong-pg-session',broker.provision({...binding,sourceSession:otherSession})]]){
@@ -46,10 +48,10 @@ export async function runPgReactD2({broker,binding,otherSession,previewDigest,re
   }
   await replace();
   for(const {key,p,session,ctx} of active){
-   await p.locator('.runtime-refresh').click();await state(p,'replaced');check(key+'/sql-replaced-no-png',await noImage(p));await capture(p,key+'-replaced');
+   await p.locator('.runtime-refresh').focus();await p.keyboard.press('Enter');await state(p,'replaced');check(key+'/focus-retained',await p.locator('.runtime-refresh').evaluate(b=>document.activeElement===b));check(key+'/sql-replaced-no-png',await noImage(p));await capture(p,key+'-replaced');
    session.revoke();await p.locator('.runtime-refresh').click();await state(p,'unavailable');check(key+'/revoked-no-png',await noImage(p));await capture(p,key+'-revoked');await ctx.close();
   }
-  check('twelve-captures',captures.length===12);assert.equal(checks.length,27);
+  check('twelve-captures',captures.length===12);assert.equal(checks.length,35);
  }finally{
   for(const ctx of contexts)await ctx.close().catch(()=>{});await browser.close();
   writeFileSync(join(out,'j08-d2a-report.json'),JSON.stringify({sha:process.env.GITHUB_SHA,checks,captures},null,2));
