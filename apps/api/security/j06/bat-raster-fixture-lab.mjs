@@ -2,6 +2,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
+import {dirname,resolve,isAbsolute} from 'node:path';
 import {deflateSync} from 'node:zlib';
 
 const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32" viewBox="0 0 64 32"><rect width="32" height="32" fill="#ff0000"/><rect x="32" width="32" height="32" fill="#0000ff"/></svg>');
@@ -14,8 +15,18 @@ function chunk(type,data){
  const size=Buffer.alloc(4),crc=Buffer.alloc(4);size.writeUInt32BE(data.length);crc.writeUInt32BE((c^0xffffffff)>>>0);
  return Buffer.concat([size,p,crc]);
 }
+// The PG harness is copied to RUNNER_TEMP; resolve from the trusted absolute
+// compiled API path supplied by the workflow, never the temporary script path.
+function sharpEntry(){
+ const port=process.env.J06_PORT;
+ if(!port||!isAbsolute(port)||!port.endsWith('/apps/api/dist/j06/quote-pg-lab.js'))throw Error('LAB_PORT_PATH');
+ return createRequire(resolve(dirname(port),'../../../web/package.json')).resolve('sharp');
+}
+export function loadFixtureSharp(){return createRequire(sharpEntry())(sharpEntry());}
 async function render(){
- const sharp=createRequire(new URL('../../../web/package.json',import.meta.url))('sharp');
+ const entry=process.env.J08_SHARP_ENTRY;
+ if(!entry||!isAbsolute(entry))throw Error('LAB_SHARP_PATH');
+ const sharp=createRequire(entry)(entry);
  const {data,info}=await sharp(svg,{limitInputPixels:2048,failOn:'error'}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
  if(info.width!==64||info.height!==32||info.channels!==4||data.length!==8192)throw Error('FIXTURE_RASTER');
  const rows=Buffer.alloc(32*257);
@@ -27,7 +38,7 @@ async function render(){
 // child process. Separate process with bounded time/output, not an OS sandbox.
 export async function rasterizePinnedFixture(source){
  if(!Buffer.isBuffer(source)||!source.equals(svg))throw Error('FIXTURE_NOT_PINNED');
- const result=spawnSync(process.execPath,[fileURLToPath(import.meta.url),'--render-pinned-fixture'],{timeout:5000,maxBuffer:65536,env:{LANG:'C'},stdio:['ignore','pipe','pipe'],windowsHide:true});
+ const result=spawnSync(process.execPath,[fileURLToPath(import.meta.url),'--render-pinned-fixture'],{timeout:5000,maxBuffer:65536,env:{LANG:'C',J08_SHARP_ENTRY:sharpEntry()},stdio:['ignore','pipe','pipe'],windowsHide:true});
  if(result.error||result.status!==0||result.signal||!Buffer.isBuffer(result.stdout)||!result.stdout.length)throw Error('RASTER_UNAVAILABLE');
  return result.stdout;
 }
