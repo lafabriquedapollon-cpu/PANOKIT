@@ -51,6 +51,60 @@ try{
  const out=process.env.J06_UI_EVIDENCE;mkdirSync(out,{recursive:true});
  ui=await startPriceUiLab({api:listener,fixture:request,css,master:readFileSync(process.env.J06_MASTER),clientSource:readFileSync(new URL('./quote-ui-client.js',import.meta.url),'utf8'),delayPickup:500});
  browser=await chromium.launch({headless:true});
+ // J08 nonvisual browser transport qualification; intercepted blank test document
+ // exists only inside Playwright, not a server route or product design.
+ {
+  const {fixtureSource,fixtureDigest,rasterizePinnedFixture}=await import('./bat-raster-fixture-lab.mjs');
+  const {startBatStatusBroker}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'../j08/bat-status-broker-lab.js'));
+  const {createBatPreviewGate}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'../j08/bat-preview-gate-lab.js'));
+  const webRoot=join(process.env.J06_PORT,'../../../../web');
+  const ts=createRequire(join(webRoot,'package.json'))('typescript');
+  const source=readFileSync(join(webRoot,'src/lib/j08/bat-lab-transport.ts'),'utf8');
+  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+  const moduleUrl='data:text/javascript;base64,'+Buffer.from(js).toString('base64');
+  const binding={caseId:'11111111-1111-4111-8111-111111111111',version:1,sourceSession:'a'.repeat(64),linkToken:'b'.repeat(64),expectedDigest:fixtureDigest};
+  let status='review',reads=0;
+  const exact=(c,s)=>c.caseId===binding.caseId&&c.version===1&&c.linkToken===binding.linkToken&&s===binding.sourceSession;
+  const adapter={status:async(c,s)=>exact(c,s)?{status:'ok',value:{scope:'LAB',manufacturable:false,version:1,status}}:{status:'unavailable'},review:async(c,s)=>{reads++;return exact(c,s)&&status==='review'?{status:'ok',value:{scope:'LAB',manufacturable:false,version:1,digest:fixtureDigest,bytesBase64:fixtureSource().toString('base64')}}:{status:'unavailable'};}};
+  const broker=await startBatStatusBroker(adapter,120000,createBatPreviewGate(adapter,[fixtureDigest],rasterizePinnedFixture));
+  const report={sha:process.env.GITHUB_SHA,checks:[]};
+  const check=async(name,fn)=>{await fn();report.checks.push({name,status:'PASS'});console.log('J08_BROWSER_TRANSPORT '+JSON.stringify({name,status:'PASS'}));};
+  const contexts=[];
+  try{
+   async function setup(session){
+    const ctx=await browser.newContext();contexts.push(ctx);
+    if(session){const pair=session.cookie.split(';')[0],i=pair.indexOf('=');await ctx.addCookies([{name:pair.slice(0,i),value:pair.slice(i+1),domain:'127.0.0.1',path:'/bat',httpOnly:true,sameSite:'Strict',secure:false}]);}
+    const p=await ctx.newPage();
+    await p.route(broker.origin+'/bat/browser-proof',route=>route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><html><title>LAB transport proof</title><body>LAB</body></html>'}));
+    await p.goto(broker.origin+'/bat/browser-proof');
+    await p.evaluate(async url=>{window.batProof=await import(url);},moduleUrl);
+    return p;
+   }
+   const session=broker.provision(binding),p=await setup(session),foreign=await setup();
+   await check('W01 actual Chromium same-origin POST and HttpOnly session',async()=>{
+    assert.equal(await p.evaluate(()=>window.isSecureContext&&!!crypto.subtle&&document.cookie===''),true);
+    assert.deepEqual(await p.evaluate(()=>window.batProof.readBatLabStatus()),{status:'ok',value:{scope:'LAB',manufacturable:false,version:1,status:'review'}});
+   });
+   await check('W02 verified browser Blob decodes to exact fixture dimensions',async()=>{
+    const result=await p.evaluate(async()=>{const r=await window.batProof.readBatLabPreview();if(r.status!=='ok')return r;const bitmap=await createImageBitmap(r.value.blob);try{return {status:'ok',mime:r.value.blob.type,width:bitmap.width,height:bitmap.height,sourceDigest:r.value.sourceDigest};}finally{bitmap.close();}});
+    assert.deepEqual(result,{status:'ok',mime:'image/png',width:64,height:32,sourceDigest:fixtureDigest});
+   });
+   await check('W03 independent browser without cookie fails closed',async()=>{
+    const before=reads;
+    assert.deepEqual(await foreign.evaluate(()=>window.batProof.readBatLabPreview()),{status:'unavailable'});assert.equal(reads,before);
+   });
+   await check('W04 replaced state denies PNG and reports status',async()=>{
+    status='replaced';
+    assert.deepEqual(await p.evaluate(()=>window.batProof.readBatLabStatus()),{status:'ok',value:{scope:'LAB',manufacturable:false,version:1,status:'replaced'}});
+    assert.deepEqual(await p.evaluate(()=>window.batProof.readBatLabPreview()),{status:'unavailable'});
+   });
+   await check('W05 revoked browser session denies both reads',async()=>{
+    session.revoke();assert.deepEqual(await p.evaluate(()=>window.batProof.readBatLabStatus()),{status:'unavailable'});assert.deepEqual(await p.evaluate(()=>window.batProof.readBatLabPreview()),{status:'unavailable'});
+   });
+   assert.equal(report.checks.length,5);
+  }finally{for(const ctx of contexts)await ctx.close();await broker.close();writeFileSync(join(out,'j08-browser-transport-report.json'),JSON.stringify(report,null,2));console.log('J08_BROWSER_TRANSPORT_RESULT '+JSON.stringify({passed:report.checks.length,total:5}));}
+ }
+
  await runGuestTransportLab({browser,domain:guestDomain,connect:adapter,fixture:request,preview:readFileSync(process.env.J06_MASTER),admin});
  await runGuestReactLab({browser,domain:guestDomain,connect:adapter,fixture:request,preview:readFileSync(process.env.J06_MASTER),admin,out});
  const report={sha:process.env.GITHUB_SHA,checks:[],captures:[]};

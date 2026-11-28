@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {randomBytes,createHash} from 'node:crypto';
+import {randomBytes,createHash,randomInt,createHmac} from 'node:crypto';
 import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,indu
 const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client','j08_otp_sender','j08_commercial_fixture','j08_gate_reader'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,otpPassed=0,gatePassed=0,adapterPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -22,6 +22,11 @@ async function ctest(name,fn){await fn();cPassed++;console.log('J06_C '+JSON.str
 async function gtest(name,fn){await fn();gPassed++;console.log('J07_D1B '+JSON.stringify({name,status:'PASS'}));}
 async function htest(name,fn){await fn();hPassed++;console.log('J07_SESSION '+JSON.stringify({name,status:'PASS'}));}
 async function vtest(name,fn){await fn();vPassed++;console.log('J07_VISUAL '+JSON.stringify({name,status:'PASS'}));}
+async function j08test(name,fn){await fn();j08Passed++;console.log('J08_PG '+JSON.stringify({name,status:'PASS'}));}
+async function linktest(name,fn){await fn();linkPassed++;console.log('J08_LINK '+JSON.stringify({name,status:'PASS'}));}
+async function otptest(name,fn){await fn();otpPassed++;console.log('J08_OTP '+JSON.stringify({name,status:'PASS'}));}
+async function gatetest(name,fn){await fn();gatePassed++;console.log('J08_GATE '+JSON.stringify({name,status:'PASS'}));}
+async function adaptertest(name,fn){await fn();adapterPassed++;console.log('J08_ADAPTER '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -39,7 +44,7 @@ try{
  await boot.query('create database '+db);
  for(const role of roles){creds[role]=randomBytes(32).toString('hex');await boot.query("create role "+role+" login password '"+creds[role]+"' nosuperuser nocreatedb nocreaterole noreplication nobypassrls");}
  admin=await connect('postgres',pw);await admin.query('revoke connect,temporary on database '+db+' from public');await admin.query('grant connect on database '+db+' to '+roles.join(','));await admin.query('revoke create on schema public from public');
- await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));
+ await admin.query(readFileSync(new URL('./industrial-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./quote-validity-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./guest-admission-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-version-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-link-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-otp-lab.sql',import.meta.url),'utf8'));await admin.query(readFileSync(new URL('./bat-gate-lab.sql',import.meta.url),'utf8'));
  [editor,approver,revoker,runtime,outsider,ie,ia,ir]=await Promise.all(['j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j03_editor','j03_approver','j03_revoker'].map(login));
  listener=await startQuoteHttpLab(adapter);
  await test('B01 empty industrial fails closed',async()=>{assert.equal((await calc(request)).reason,'industrial_unavailable');});
@@ -203,6 +208,142 @@ try{
   assert.equal(await consentCount(),2);
   assert.equal(await scalar(admin,"select locale from j06_private.guest_visual_consents where receipt_id=$1",[deliveryReceipt]),'ar');
  });
+ const [intake,issuer,workshop,wrongWorkshop]=await Promise.all(['j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b'].map(login));
+ const batCase='11111111-1111-4111-8111-111111111111',batOther='22222222-2222-4222-8222-222222222222';let activeBatCase=batCase;
+ const tx=async(c,q,args)=>{await c.query('begin isolation level serializable');try{const v=await scalar(c,q,args);await c.query('commit');return v;}catch(e){await c.query('rollback');throw e;}};
+ const open=(c,caseId=batCase,receipt=pickupReceipt,cap=hashToken(session))=>tx(c,'select j08_private.open_case($1,$2,$3,$4)',[caseId,receipt,cap,'j08_workshop_a']);
+ const decision=(c,version,d,event)=>tx(c,'select j08_private.decide($1,$2,$3,$4)',[activeBatCase,version,d,event]);
+ const issue=(c,version,b=archiveBytes)=>tx(c,'select j08_private.issue($1,$2,$3)',[activeBatCase,version,b]);
+ const events=()=>scalar(admin,'select count(*)::int from j08_private.events');
+ await j08test('P01 least privilege, no direct read/write or cross-function',async()=>{
+  for(const c of [intake,issuer,workshop,wrongWorkshop,runtime,outsider]){
+   await denied(()=>c.query('select * from j08_private.cases'));
+   await denied(()=>c.query('delete from j08_private.events'));
+   await denied(()=>c.query('update j08_private.versions set digest=\'x\''));
+   await denied(()=>c.query('set role j08_owner'));
+  }
+  await denied(()=>open(issuer));await denied(()=>issue(intake,0));
+  await denied(()=>intake.query('select j08_private.open_case($1,$2,$3,$4)',[batCase,pickupReceipt,hashToken(session),'j08_workshop_a']));
+ });
+ await j08test('P02 wrong session and receipt without archived bytes denied',async()=>{
+  assert.equal(await open(intake,batCase,pickupReceipt,hashToken(otherSession)),false);
+  assert.equal(await open(intake,batCase,deliveryReceipt),false);
+  assert.equal(await events(),0);
+ });
+ await j08test('P03 concurrent intake creates one case with exact J07 provenance',async()=>{
+  const second=await login('j08_intake');
+  const results=await Promise.allSettled([open(intake),open(second,batOther)]);
+  assert.equal(results.filter(x=>x.status==='fulfilled'&&x.value===true).length,1);
+  for(const x of results)if(x.status==='rejected')assert.equal(x.reason.code,'40001');
+  const actual=(await admin.query('select case_id::text,receipt_id::text,source_digest,source_bytes from j08_private.cases')).rows;
+  assert.equal(actual.length,1);assert.equal(actual[0].receipt_id,pickupReceipt);
+  assert.equal(actual[0].source_digest,archiveDigest);assert.deepEqual(actual[0].source_bytes,archiveBytes);
+  // Use the actual winning case for subsequent steps.
+  activeBatCase=actual[0].case_id;
+  assert.equal(await open(intake,batOther,pickupReceipt),false);assert.equal(await events(),1);
+ });
+ await j08test('P04 wrong workshop and digest cannot approve; no issue before review',async()=>{
+  assert.equal(await issue(issuer,0),null);
+  assert.equal(await decision(wrongWorkshop,0,archiveDigest,'feasible'),false);
+  assert.equal(await decision(workshop,0,'0'.repeat(64),'feasible'),false);
+  assert.equal(await decision(workshop,0,archiveDigest,'feasible'),true);
+  assert.equal(await decision(workshop,0,archiveDigest,'feasible'),false);
+  assert.equal(await events(),2);
+ });
+ await j08test('P05 rollback of issuance leaves no version or event',async()=>{
+  await issuer.query('begin isolation level serializable');
+  try{assert.equal(Number(await scalar(issuer,'select j08_private.issue($1,$2,$3)',[activeBatCase,0,archiveBytes])),1);}
+  finally{await issuer.query('rollback');}
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),0);assert.equal(await events(),2);
+ });
+ await j08test('P06 concurrent issuer same head exactly one new immutable version',async()=>{
+  const second=await login('j08_issuer');
+  const out=await Promise.allSettled([issue(issuer,0),issue(second,0)]);
+  assert.equal(out.filter(x=>x.status==='fulfilled'&&Number(x.value)===1).length,1);
+  for(const x of out)if(x.status==='rejected')assert.equal(x.reason.code,'40001');
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),1);
+  assert.equal(await scalar(admin,'select technical from j08_private.cases'),'review');assert.equal(await events(),3);
+ });
+ await j08test('P07 technical decision bound to exact version, correction replaces only on issuance',async()=>{
+  assert.equal(await decision(workshop,0,archiveDigest,'feasible'),false);
+  assert.equal(await decision(workshop,1,'0'.repeat(64),'correction'),false);
+  assert.equal(await decision(workshop,1,archiveDigest,'correction'),true);
+  assert.equal(Number(await issue(issuer,1,archiveBytes)),2);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),2);
+  assert.equal(await decision(workshop,1,archiveDigest,'feasible'),false);
+  assert.equal(await decision(workshop,2,archiveDigest,'feasible'),true);
+  assert.equal(await scalar(admin,'select technical_version::int from j08_private.cases'),2);
+  assert.equal(await scalar(admin,"select count(*)::int from j08_private.events where event='superseded'"),1);
+  assert.equal(await events(),7);
+ });
+ const client=await login('j08_client'), sourceSession=hashToken(session), wrongSession=hashToken(otherSession);
+ const linkHash=()=>hashToken(randomBytes(32).toString('hex'));
+ const rotate=(c,k,v=2,cap=sourceSession,d=archiveDigest)=>tx(c,'select j08_private.rotate_link($1,$2,$3,$4,$5)',[activeBatCase,v,d,cap,k]);
+ const readBat=(c,k,v=2,cap=sourceSession,id=activeBatCase)=>tx(c,'select j08_private.read_bat($1,$2,$3,$4)',[id,v,cap,k]);
+ const revoke=(c,k,v=2)=>tx(c,'select j08_private.revoke_link($1,$2,$3)',[activeBatCase,v,k]);
+ const l1=linkHash(),l2=linkHash(),l3=linkHash();let winner;
+ await linktest('L01 role separation and helper denial',async()=>{
+  for(const c of [client,issuer,workshop,intake,runtime,outsider]){
+   await denied(()=>c.query('select * from j08_private.links'));
+   await denied(()=>c.query('delete from j08_private.link_events'));
+  }
+  await denied(()=>rotate(client,l1));await denied(()=>readBat(issuer,l1));
+  await denied(()=>tx(client,'select j08_private.lock_valid_link($1,$2,$3,$4)',[activeBatCase,2,sourceSession,l1]));
+  await denied(()=>client.query('select j08_private.read_bat($1,$2,$3,$4)',[activeBatCase,2,sourceSession,l1]));
+ });
+ await linktest('L02 wrong source session, old version and digest denied',async()=>{
+  assert.equal(await rotate(issuer,l1,2,wrongSession),false);
+  assert.equal(await rotate(issuer,l1,1),false);
+  assert.equal(await rotate(issuer,l1,2,sourceSession,'0'.repeat(64)),false);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),0);
+ });
+ await linktest('L03 exact private projection and fixed seven-day TTL',async()=>{
+  assert.equal(await rotate(issuer,l1),true);
+  const result=await readBat(client,l1);
+  assert.deepEqual(Object.keys(result).sort(),['bytesBase64','digest','manufacturable','scope','version']);
+  assert.equal(result.version,2);assert.equal(result.digest,archiveDigest);assert.equal(result.manufacturable,false);
+  assert.deepEqual(Buffer.from(result.bytesBase64,'base64'),archiveBytes);
+  assert.equal(await scalar(admin,'select extract(epoch from expires_at-issued_at)::int from j08_private.links'),604800);
+  assert.equal(await readBat(client,l1,2,wrongSession),null);
+  assert.equal(await readBat(client,l1,1),null);
+  assert.equal(await readBat(client,linkHash()),null);
+  assert.equal(await readBat(client,l1,2,sourceSession,'44444444-4444-4444-8444-444444444444'),null);
+ });
+ await linktest('L04 rollback rotation preserves previous link and audit',async()=>{
+  await issuer.query('begin isolation level serializable');
+  try{assert.equal(await scalar(issuer,'select j08_private.rotate_link($1,$2,$3,$4,$5)',[activeBatCase,2,archiveDigest,sourceSession,l2]),true);}
+  finally{await issuer.query('rollback');}
+  assert.ok(await readBat(client,l1));assert.equal(await readBat(client,l2),null);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),1);
+ });
+ await linktest('L05 rotation invalidates old token; duplicate cannot revoke current',async()=>{
+  assert.equal(await rotate(issuer,l2),true);assert.equal(await readBat(client,l1),null);
+  assert.equal(await rotate(issuer,l1),false);assert.ok(await readBat(client,l2));
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),3);
+ });
+ await linktest('L06 concurrent rotations leave exactly one current token',async()=>{
+  const second=await login('j08_issuer'),a=linkHash(),b=linkHash();
+  const out=await Promise.allSettled([rotate(issuer,a),rotate(second,b)]);
+  assert.ok(out.some(x=>x.status==='fulfilled'&&x.value===true));
+  for(const x of out)if(x.status==='rejected')assert.equal(x.reason.code,'40001');
+  const allowed=await Promise.all([readBat(client,a),readBat(await login('j08_client'),b)]);
+  assert.equal(allowed.filter(Boolean).length,1);winner=allowed[0]?a:b;
+  assert.equal(await readBat(client,l2),null);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links where revoked_at is null'),1);
+ });
+ await linktest('L07 revoke is terminal for token; expired fixture denied',async()=>{
+  assert.equal(await revoke(issuer,winner),true);assert.equal(await revoke(issuer,winner),false);
+  assert.equal(await readBat(client,winner),null);assert.equal(await rotate(issuer,l3),true);
+  // Privileged fixture-only clock simulation; runtime roles cannot alter timestamps.
+  await admin.query("update j08_private.links set issued_at=t,expires_at=t+interval '168 hours' from (select clock_timestamp()-interval '169 hours' t) x where token_hash=$1",[l3]);
+  assert.equal(await readBat(client,l3),null);
+ });
+ await linktest('L08 bounded renewals and exactly one current link',async()=>{
+  const count=await scalar(admin,'select count(*)::int from j08_private.links');
+  for(let i=count;i<10;i++){winner=linkHash();assert.equal(await rotate(issuer,winner),true);}
+  assert.equal(await rotate(issuer,linkHash()),false);assert.ok(await readBat(client,winner));
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),10);
+ });
  await test('B08 injected price, zone, malformed JSON rejected',async()=>{for(const x of [{...request,price:1},{...delivery,fulfillment:{...delivery.fulfillment,zoneId:'test-zone'}},{...request,options:['test-a','test-a']}])assert.equal((await call(x)).status,400);const b=await fetch(listener.url,{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:'{' });assert.equal(b.status,400);assert.equal(Number(await scalar(admin,'select count(*) from j06_private.quotes')),2);});
  await test('B09 invalid mapping refused',async()=>{await assert.rejects(()=>save(editor,t2,tariffLabDigest(t2),{'real-address':{zoneId:'x',depotId:'y'}}),e=>e.code==='22023');});
  await test('B10 concurrent optimistic writers exactly one winner',async()=>{const second=await login('j06_editor');const out=await Promise.allSettled([save(editor,t2),save(second,t2)]);assert.equal(out.filter(x=>x.status==='fulfilled').length,1);assert.equal(out.find(x=>x.status==='rejected').reason.code,'40001');assert.equal((await calc(request)).reason,'tariff_unavailable');});
@@ -220,6 +361,521 @@ try{
  await ctest('C08 restart retains lease history, not authority',async()=>{assert.equal(Number(await scalar(admin,'select count(*) from j06_private.leases')),6);listener=await startQuoteHttpLab(adapter);const a=await leaseCall('revalidate',{leaseToken:lease.leaseToken});assert.equal(a.status,409);assert.equal(a.body.reason,'industrial_unavailable');});
  await gtest('G08 restart preserves receipts and withdrawn industry rejects lease',async()=>{assert.equal(await admissionCount(),2);assert.equal((await admit(guestCurrentToken)).reason,'industrial_unavailable');});
  await vtest('V07 restart retains evidence but no order authority',async()=>{assert.equal(await consentCount(),2);assert.equal(await archiveCount(),1);assert.deepEqual(await scalar(admin,'select svg_bytes from j06_private.guest_visual_archive where receipt_id=$1',[pickupReceipt]),archiveBytes);assert.equal((await acknowledge()).reason,'industrial_unavailable');});
+ await j08test('P08 restart preserves exact versions, provenance and event history',async()=>{
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.cases'),1);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.versions'),2);
+  assert.equal(await events(),7);
+  assert.deepEqual(await scalar(admin,'select source_bytes from j08_private.cases'),archiveBytes);
+  assert.deepEqual(await scalar(admin,'select bat_bytes from j08_private.versions where version=2'),archiveBytes);
+  assert.equal(await scalar(admin,'select technical_version::int from j08_private.cases'),2);
+ });
+ await linktest('L09 restart retains revocation, expiry and one active link',async()=>{
+  const after=await login('j08_client');
+  assert.ok(await readBat(after,winner));assert.equal(await readBat(after,l1),null);
+  assert.equal(await readBat(after,l3),null);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links'),10);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.link_events'),19);
+ });
+ const [otpSender,otpClient,otpIssuer,otpWorkshop]=await Promise.all(['j08_otp_sender','j08_client','j08_issuer','j08_workshop_a'].map(login));
+ const code=()=>String(randomInt(0,1000000)).padStart(6,'0');
+ const otpIssue=(c,k,v,p,cap=sourceSession,d=archiveDigest)=>tx(c,'select j08_private.issue_otp($1,$2,$3,$4,$5,$6)',[activeBatCase,v,cap,k,d,p]);
+ const confirm=(c,k,v,q,p,cap=sourceSession,d=archiveDigest,statement='lab-bat-v1',locale='fr')=>tx(c,'select j08_private.confirm_otp($1,$2,$3,$4,$5,$6,$7,$8,$9)',[activeBatCase,v,cap,k,d,q,p,statement,locale]);
+ const refuse=(c,k,v,explicit)=>tx(c,'select j08_private.refuse_bat($1,$2,$3,$4,$5,$6,$7)',[activeBatCase,v,sourceSession,k,archiveDigest,explicit,'ar']);
+ const expire=(c,v)=>tx(c,'select j08_private.expire_bat($1,$2,$3)',[activeBatCase,v,archiveDigest]);
+ const countDecisions=()=>scalar(admin,'select count(*)::int from j08_private.bat_decisions');
+ const series=async v=>(await admin.query('select attempts,issued_count from j08_private.otp_series where case_id=$1 and version=$2',[activeBatCase,v])).rows[0];
+ const allowResend=v=>admin.query("update j08_private.otp_series set last_issued_at=clock_timestamp()-interval '31 seconds' where case_id=$1 and version=$2",[activeBatCase,v]);
+ const nextVersion=async v=>{assert.equal(await decision(otpWorkshop,v-1,archiveDigest,'correction'),true);assert.equal(Number(await issue(otpIssuer,v-1)),v);assert.equal(await decision(otpWorkshop,v,archiveDigest,'feasible'),true);const k=linkHash();assert.equal(await rotate(otpIssuer,k,v),true);return k;};
+ let p=code(),q,k3,k4,k5,k6;
+ await otptest('O01 role separation and private secret/HMAC denial',async()=>{
+  for(const c of [otpClient,otpSender,otpIssuer,otpWorkshop]){
+   for(const table of ['otp_secret','otp_series','otp_challenges','bat_decisions','bat_expirations','otp_events'])await denied(()=>c.query('select * from j08_private.'+table));
+   await denied(()=>c.query('delete from j08_private.bat_decisions'));
+   await denied(()=>c.query("select j08_private.otp_mac($1,$2,$3,$4,$5,$6,$7)",[batCase,batCase,2,archiveDigest,winner,sourceSession,p]));
+  }
+  await denied(()=>otpIssue(otpClient,winner,2,p));await denied(()=>confirm(otpSender,winner,2,batCase,p));
+ });
+ await otptest('O02 invalid context, HMAC and five-minute expiry',async()=>{
+  assert.equal(await otpIssue(otpSender,winner,2,p,wrongSession),null);
+  assert.equal(await otpIssue(otpSender,winner,2,p,sourceSession,'0'.repeat(64)),null);
+  assert.equal(await otpIssue(otpSender,l1,2,p),null);
+  q=await otpIssue(otpSender,winner,2,p);assert.match(q,/^[a-f0-9-]{36}$/);
+  const row=(await admin.query('select mac,extract(epoch from expires_at-issued_at)::int as ttl from j08_private.otp_challenges where challenge_id=$1',[q])).rows[0];
+  const key=await scalar(admin,'select key_bytes from j08_private.otp_secret');
+  const expected=createHmac('sha256',key).update(['panokit-lab-otp-v1',q,activeBatCase,2,archiveDigest,winner,sourceSession,p].join('|')).digest();
+  assert.deepEqual(row.mac,expected);assert.equal(row.ttl,300);
+  assert.equal(await confirm(otpClient,winner,2,q,p,wrongSession),'denied');
+  assert.equal(await confirm(otpClient,winner,2,q,p,sourceSession,archiveDigest,'other'),'denied');
+  assert.deepEqual(await series(2),{attempts:0,issued_count:1});
+  assert.equal(await otpIssue(otpSender,winner,2,code()),null);
+ });
+ await otptest('O03 expired challenge denied; resend retains wrong attempts',async()=>{
+  assert.equal(await confirm(otpClient,winner,2,q,'invalid'),'wrong');
+  await admin.query("update j08_private.otp_challenges set issued_at=t,expires_at=t+interval '5 minutes' from (select clock_timestamp()-interval '6 minutes' t) x where challenge_id=$1",[q]);
+  assert.equal(await confirm(otpClient,winner,2,q,p),'denied');
+  await allowResend(2);const old=q,oldCode=p;p=code();q=await otpIssue(otpSender,winner,2,p);
+  assert.ok(q);assert.notEqual(q,old);
+  assert.equal(await confirm(otpClient,winner,2,old,oldCode),'denied');
+  assert.deepEqual(await series(2),{attempts:1,issued_count:2});
+ });
+ await otptest('O04 rollback approval leaves challenge reusable',async()=>{
+  await otpClient.query('begin isolation level serializable');
+  try{assert.equal(await scalar(otpClient,'select j08_private.confirm_otp($1,$2,$3,$4,$5,$6,$7,$8,$9)',[activeBatCase,2,sourceSession,winner,archiveDigest,q,p,'lab-bat-v1','fr']),'approved');}
+  finally{await otpClient.query('rollback');}
+  assert.equal(await countDecisions(),0);assert.ok(await readBat(otpClient,winner));
+ });
+ await otptest('O05 concurrent correct code yields exactly one immutable decision',async()=>{
+  const another=await login('j08_client');
+  const out=await Promise.allSettled([confirm(otpClient,winner,2,q,p),confirm(another,winner,2,q,p)]);
+  assert.equal(out.filter(x=>x.status==='fulfilled'&&x.value==='approved').length,1);
+  for(const x of out)if(x.status==='rejected')assert.ok(['40001','23505'].includes(x.reason.code));
+  assert.equal(await countDecisions(),1);
+  const proof=(await admin.query('select version::int,digest,decision,challenge_id,statement_version,locale from j08_private.bat_decisions')).rows[0];
+  assert.deepEqual(proof,{version:2,digest:archiveDigest,decision:'approved',challenge_id:q,statement_version:'lab-bat-v1',locale:'fr'});
+  assert.equal(await confirm(otpClient,winner,2,q,p),'denied');
+  assert.equal(await readBat(otpClient,winner),null);
+  assert.equal(await rotate(otpIssuer,linkHash()),false);
+ });
+ await otptest('O06 correction of approved BAT creates new version without copying consent',async()=>{
+  k3=await nextVersion(3);assert.equal(await countDecisions(),1);
+  assert.equal(await readBat(otpClient,winner),null);assert.ok(await readBat(otpClient,k3,3));
+  assert.equal(await otpIssue(otpSender,winner,2,code()),null);
+ });
+ await otptest('O07 five attempts persist across rotation and resend',async()=>{
+  p=code();q=await otpIssue(otpSender,k3,3,p);assert.ok(q);
+  assert.equal(await confirm(otpClient,k3,3,q,'invalid'),'wrong');
+  const oldKey=k3;k3=linkHash();assert.equal(await rotate(otpIssuer,k3,3),true);
+  assert.equal(await confirm(otpClient,k3,3,q,p),'denied');
+  assert.equal(await confirm(otpClient,oldKey,3,q,p),'denied');
+  await allowResend(3);p=code();q=await otpIssue(otpSender,k3,3,p);
+  for(let i=2;i<=5;i++)assert.equal(await confirm(otpClient,k3,3,q,'invalid'),i===5?'locked':'wrong');
+  assert.equal(await confirm(otpClient,k3,3,q,p),'locked');
+  await allowResend(3);assert.equal(await otpIssue(otpSender,k3,3,code()),null);
+  assert.deepEqual(await series(3),{attempts:5,issued_count:2});
+ });
+ await otptest('O08 explicit refusal terminal and excludes consent',async()=>{
+  k4=await nextVersion(4);assert.equal(await refuse(otpClient,k4,4,false),false);
+  assert.equal(await refuse(otpClient,k4,4,true),true);
+  assert.equal(await refuse(otpClient,k4,4,true),false);
+  assert.equal(await otpIssue(otpSender,k4,4,code()),null);
+  assert.equal(await rotate(otpIssuer,linkHash(),4),false);
+  assert.equal(await scalar(admin,"select count(*)::int from j08_private.bat_decisions where decision='refused'"),1);
+ });
+ await otptest('O09 independent business expiry blocks valid access',async()=>{
+  k5=await nextVersion(5);p=code();q=await otpIssue(otpSender,k5,5,p);assert.ok(q);
+  await denied(()=>expire(otpClient,5));
+  assert.equal(await expire(otpIssuer,5),true);assert.equal(await expire(otpIssuer,5),false);
+  assert.equal(await readBat(otpClient,k5,5),null);assert.equal(await confirm(otpClient,k5,5,q,p),'denied');
+ });
+ await otptest('O10 issuance ceiling without resetting attempts',async()=>{
+  k6=await nextVersion(6);
+  for(let i=1;i<=5;i++){if(i>1)await allowResend(6);assert.ok(await otpIssue(otpSender,k6,6,code()));}
+  await allowResend(6);assert.equal(await otpIssue(otpSender,k6,6,code()),null);
+  assert.deepEqual(await series(6),{attempts:0,issued_count:5});
+ });
+ await otptest('O11 restart preserves decisions, expiry and counters',async()=>{
+  await listener.close();listener=undefined;
+  for(const c of [...clients])await close(c);await pg.stop();started=false;await pg.start();started=true;admin=await connect('postgres',pw);
+  const c=await login('j08_client'),sender=await login('j08_otp_sender');
+  assert.equal(await countDecisions(),2);assert.deepEqual(await series(3),{attempts:5,issued_count:2});
+  assert.deepEqual(await series(6),{attempts:0,issued_count:5});
+  assert.equal(await otpIssue(sender,k6,6,code()),null);
+  assert.equal(await readBat(c,k5,5),null);assert.equal(await readBat(c,k4,4),null);
+  assert.equal(await scalar(admin,"select count(*)::int from j08_private.otp_events where event='approved'"),1);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_expirations'),1);
+ });
+ const [gateClient,gateSender,gateIssuer,gateWorkshop,commercial,gateReader]=await Promise.all(['j08_client','j08_otp_sender','j08_issuer','j08_workshop_a','j08_commercial_fixture','j08_gate_reader'].map(login));
+ const status=(c,k,v,cap=sourceSession,id=activeBatCase)=>tx(c,'select j08_private.read_status($1,$2,$3,$4)',[id,v,cap,k]);
+ const fixture=(c,v,event,d=archiveDigest)=>tx(c,'select j08_private.record_commercial_fixture($1,$2,$3,$4)',[activeBatCase,v,d,event]);
+ const gate=(c,v,d=archiveDigest)=>tx(c,'select j08_private.read_fixture_eligibility($1,$2,$3)',[activeBatCase,v,d]);
+ const expectedGate=eligible=>({scope:'LAB',fixtureEligible:eligible,manufacturable:false});
+ const advance=async v=>{assert.equal(await decision(gateWorkshop,v-1,archiveDigest,'correction'),true);assert.equal(Number(await issue(gateIssuer,v-1)),v);assert.equal(await decision(gateWorkshop,v,archiveDigest,'feasible'),true);const k=linkHash();assert.equal(await rotate(gateIssuer,k,v),true);return k;};
+ const approve=async(k,v)=>{const p=code(),q=await otpIssue(gateSender,k,v,p);assert.ok(q);assert.equal(await confirm(gateClient,k,v,q,p),'approved');};
+ let k7,k8;
+ await gatetest('E01 separation of client, commercial fixture and gate roles',async()=>{
+  for(const c of [gateClient,gateSender,gateIssuer,gateWorkshop,commercial,gateReader]){
+   await denied(()=>c.query('select * from j08_private.commercial_fixture_events'));
+   await denied(()=>c.query('delete from j08_private.commercial_fixture_events'));
+  }
+  await denied(()=>gate(commercial,6));await denied(()=>gate(gateWorkshop,6));await denied(()=>fixture(gateReader,6,'verified_fixture'));
+  await denied(()=>fixture(gateClient,6,'verified_fixture'));await denied(()=>status(gateReader,k6,6));
+ });
+ await gatetest('E02 status is minimal and context-bound, replaced never exposes bytes',async()=>{
+  const r=await status(gateClient,k6,6);assert.deepEqual(r,{scope:'LAB',manufacturable:false,version:6,status:'review'});
+  assert.equal(await status(gateClient,k6,6,wrongSession),null);
+  assert.equal(await status(gateClient,linkHash(),6),null);
+  assert.equal(await status(gateClient,k6,6,sourceSession,'44444444-4444-4444-8444-444444444444'),null);
+  assert.equal(await status(gateClient,l1,2),null);
+  assert.equal((await status(gateClient,k4,4)).status,'replaced');
+  assert.equal(await readBat(gateClient,k4,4),null);
+ });
+ await gatetest('E03 no commercial fixture or eligibility for pending or stale version',async()=>{
+  assert.equal(await fixture(commercial,6,'verified_fixture'),false);
+  assert.deepEqual(await gate(gateReader,6),expectedGate(false));
+  assert.deepEqual(await gate(gateReader,2),expectedGate(false));
+  assert.equal(await fixture(commercial,2,'verified_fixture'),false);
+ });
+ await gatetest('E04 exact approved BAT status and independent fixture proof',async()=>{
+  k7=await advance(7);await approve(k7,7);
+  assert.deepEqual(await status(gateClient,k7,7),{scope:'LAB',manufacturable:false,version:7,status:'approved'});
+  assert.equal(await readBat(gateClient,k7,7),null);
+  assert.deepEqual(await gate(gateReader,7),expectedGate(false));
+  assert.equal(await fixture(commercial,7,'verified_fixture','0'.repeat(64)),false);
+  assert.equal(await fixture(commercial,7,'verified_fixture'),true);
+  assert.equal(await fixture(commercial,7,'verified_fixture'),false);
+  assert.deepEqual(await gate(gateReader,7),expectedGate(true));
+  assert.deepEqual(await gate(gateReader,7,'0'.repeat(64)),expectedGate(false));
+ });
+ await gatetest('E05 stale serializable snapshot fails after fixture withdrawal',async()=>{
+  await gateReader.query('begin isolation level serializable');
+  try{
+   await scalar(gateReader,'select 1 from pg_catalog.pg_class limit 1');
+   assert.equal(await fixture(commercial,7,'withdrawn_fixture'),true);
+   await assert.rejects(()=>scalar(gateReader,'select j08_private.read_fixture_eligibility($1,$2,$3)',[activeBatCase,7,archiveDigest]),e=>e.code==='40001');
+  }finally{await gateReader.query('rollback');}
+  assert.deepEqual(await gate(gateReader,7),expectedGate(false));
+  assert.equal(await fixture(commercial,7,'verified_fixture'),false);
+ });
+ await gatetest('E06 correction, new version and business expiry deny previous eligibility',async()=>{
+  k8=await advance(8);
+  assert.equal((await status(gateClient,k7,7)).status,'replaced');
+  await approve(k8,8);
+  assert.equal(await fixture(commercial,8,'verified_fixture'),true);
+  assert.deepEqual(await gate(gateReader,8),expectedGate(true));
+  assert.equal(await expire(gateIssuer,8),true);
+  assert.equal((await status(gateClient,k8,8)).status,'expired');
+  assert.deepEqual(await gate(gateReader,8),expectedGate(false));
+  assert.deepEqual(await gate(gateReader,7),expectedGate(false));
+ });
+ await gatetest('E07 persistence and no manufacturing grant after restart',async()=>{
+  for(const c of [...clients])await close(c);await pg.stop();started=false;await pg.start();started=true;admin=await connect('postgres',pw);
+  const c=await login('j08_client'),g=await login('j08_gate_reader');
+  assert.equal((await status(c,k8,8)).status,'expired');
+  assert.deepEqual(await gate(g,8),expectedGate(false));
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.commercial_fixture_events'),3);
+  assert.ok(Number(await scalar(admin,'select security_revision from j08_private.cases'))>0);
+ });
+ const {createBatLabAdapter}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-pg-lab.js'));
+ const realConnect=role=>async()=>{const c=await login(role);return {query:(q,a)=>c.query(q,a),close:()=>close(c)};};
+ const fakeMessages=[];
+ const ports={issuer:realConnect('j08_issuer'),client:realConnect('j08_client'),sender:realConnect('j08_otp_sender'),fakeDelivery:async m=>{fakeMessages.push(m);}};
+ const batAdapter=createBatLabAdapter(ports);
+ const work=await login('j08_workshop_a'),iss=await login('j08_issuer');
+ let ctx,challenge;
+ await adaptertest('A01 real adapter issues private hashed link and reviews exact bytes',async()=>{
+  assert.equal(await decision(work,8,archiveDigest,'correction'),true);
+  assert.equal(Number(await issue(iss,8)),9);
+  assert.equal(await decision(work,9,archiveDigest,'feasible'),true);
+  const r=await batAdapter.rotate({caseId:activeBatCase,version:9,digest:archiveDigest},session);
+  assert.equal(r.status,'ok');ctx={caseId:activeBatCase,version:9,linkToken:r.value.linkToken};
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links where token_hash=$1',[hashToken(ctx.linkToken)]),1);
+  const view=await batAdapter.review(ctx,session);assert.equal(view.status,'ok');assert.deepEqual(Buffer.from(view.value.bytesBase64,'base64'),archiveBytes);
+  assert.deepEqual(await batAdapter.review(ctx,otherSession),{status:'unavailable'});
+  assert.deepEqual(await batAdapter.status({...ctx,session},session),{status:'unavailable'});
+ });
+ await adaptertest('A02 actual OTP issued only after commit and wrong count persisted',async()=>{
+  const r=await batAdapter.sendOtp({...ctx,digest:archiveDigest},session);assert.equal(r.status,'ok');challenge=r.value.challengeId;
+  assert.equal(fakeMessages.length,1);assert.equal(fakeMessages[0].challengeId,challenge);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.otp_challenges where challenge_id=$1',[challenge]),1);
+  assert.deepEqual(await batAdapter.confirm({...ctx,digest:archiveDigest,challengeId:challenge,code:'invalid',statement:'lab-bat-v1',locale:'ar'},session),{status:'ok',value:'wrong'});
+  assert.deepEqual(await series(9),{attempts:1,issued_count:1});
+ });
+ await adaptertest('A03 lost actual commit acknowledgement never returns approval; status reconciles',async()=>{
+  const ambiguous=createBatLabAdapter({...ports,client:async()=>{const c=await realConnect('j08_client')();return {...c,query:async(q,a)=>{const r=await c.query(q,a);if(q==='commit')throw Error('simulated lost ACK');return r;}};}});
+  const request={...ctx,digest:archiveDigest,challengeId:challenge,code:fakeMessages[0].code,statement:'lab-bat-v1',locale:'fr'};
+  assert.deepEqual(await ambiguous.confirm(request,session),{status:'unavailable'});
+  assert.equal((await batAdapter.status(ctx,session)).value.status,'approved');
+  assert.deepEqual(await batAdapter.confirm(request,session),{status:'unavailable'});
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_decisions where version=9'),1);
+ });
+ await adaptertest('A04 actual ambiguous OTP commit never delivers code',async()=>{
+  assert.equal(await decision(work,9,archiveDigest,'correction'),true);assert.equal(Number(await issue(iss,9)),10);assert.equal(await decision(work,10,archiveDigest,'feasible'),true);
+  const r=await batAdapter.rotate({caseId:activeBatCase,version:10,digest:archiveDigest},session);assert.equal(r.status,'ok');
+  const next={caseId:activeBatCase,version:10,linkToken:r.value.linkToken};
+  const ambiguous=createBatLabAdapter({...ports,sender:async()=>{const c=await realConnect('j08_otp_sender')();return {...c,query:async(q,a)=>{const r=await c.query(q,a);if(q==='commit')throw Error('simulated lost ACK');return r;}};}});
+  assert.deepEqual(await ambiguous.sendOtp({...next,digest:archiveDigest},session),{status:'unavailable'});
+  assert.equal(fakeMessages.length,1);assert.deepEqual(await series(10),{attempts:0,issued_count:1});
+ });
+ const {startBatStatusBroker}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-status-broker-lab.js'));
+ const broker=await startBatStatusBroker(batAdapter);
+ let brokerPassed=0,liveCtx,browser;
+ const btest=async(name,fn)=>{await fn();brokerPassed++;console.log('J08_BROKER '+JSON.stringify({name,status:'PASS'}));};
+ const requestStatus=async(s,body='{}')=>{
+  const r=await fetch(broker.origin+'/bat/status',{method:'POST',headers:{origin:broker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0]},body});
+  return {code:r.status,body:await r.json(),cache:r.headers.get('cache-control')};
+ };
+ const expectedStatus=(version,status)=>({code:200,body:{scope:'LAB',manufacturable:false,version,status},cache:'no-store'});
+ const deniedStatus={code:403,body:{status:'unavailable',manufacturable:false},cache:'no-store'};
+ try{
+  await btest('H01 real HTTP broker reads current BAT from PG17 with minimal projection',async()=>{
+   assert.equal(await decision(work,10,archiveDigest,'correction'),true);assert.equal(Number(await issue(iss,10)),11);assert.equal(await decision(work,11,archiveDigest,'feasible'),true);
+   const r=await batAdapter.rotate({caseId:activeBatCase,version:11,digest:archiveDigest},session);assert.equal(r.status,'ok');
+   liveCtx={caseId:activeBatCase,version:11,linkToken:r.value.linkToken};
+   browser=broker.provision({...liveCtx,sourceSession:session});
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'review'));
+  });
+  await btest('H02 real SQL refuses wrong session and token; browser cannot select context',async()=>{
+   for(const binding of [{...liveCtx,sourceSession:otherSession},{...liveCtx,sourceSession:session,linkToken:randomBytes(32).toString('hex')}])assert.deepEqual(await requestStatus(broker.provision(binding)),deniedStatus);
+   const injected=await requestStatus(browser,JSON.stringify({caseId:'x'}));assert.equal(injected.code,400);assert.deepEqual(injected.body,deniedStatus.body);
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'review'));
+  });
+  await btest('H03 token rotation revokes old browser binding; committed approval is visible',async()=>{
+   const r=await batAdapter.rotate({caseId:activeBatCase,version:11,digest:archiveDigest},session);assert.equal(r.status,'ok');
+   assert.deepEqual(await requestStatus(browser),deniedStatus);
+   liveCtx={...liveCtx,linkToken:r.value.linkToken};browser=broker.provision({...liveCtx,sourceSession:session});
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'review'));
+   const otp=await batAdapter.sendOtp({...liveCtx,digest:archiveDigest},session);assert.equal(otp.status,'ok');assert.equal(fakeMessages.length,2);
+   assert.deepEqual(await batAdapter.confirm({...liveCtx,digest:archiveDigest,challengeId:otp.value.challengeId,code:fakeMessages[1].code,statement:'lab-bat-v1',locale:'fr'},session),{status:'ok',value:'approved'});
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'approved'));
+   assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_decisions where version=11'),1);
+  });
+  await btest('H04 replaced BAT exposes no bytes and revoked browser cannot read status',async()=>{
+   assert.equal(await decision(work,11,archiveDigest,'correction'),true);assert.equal(Number(await issue(iss,11)),12);
+   assert.deepEqual(await requestStatus(browser),expectedStatus(11,'replaced'));
+   browser.revoke();assert.deepEqual(await requestStatus(browser),deniedStatus);
+  });
+ }finally{await broker.close();}
+ const {fixtureSource,fixtureDigest,rasterizePinnedFixture,loadFixtureSharp}=await import('./bat-raster-fixture-lab.mjs');
+ const {createBatPreviewGate}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-preview-gate-lab.js'));
+ const sharp=loadFixtureSharp();
+ let rasterPassed=0,rasterCtx,projection,renderCalls=0;
+ const rtest=async(name,fn)=>{await fn();rasterPassed++;console.log('J08_RASTER '+JSON.stringify({name,status:'PASS'}));};
+ const previewGate=createBatPreviewGate(batAdapter,[fixtureDigest],async source=>{renderCalls++;return rasterizePinnedFixture(source);});
+ await rtest('V01 exact PG17 BAT yields real isolated PNG with verified digests',async()=>{
+  assert.equal(await decision(work,12,archiveDigest,'feasible'),true);
+  assert.equal(Number(await issue(iss,12,fixtureSource())),13);
+  assert.equal(await decision(work,13,fixtureDigest,'feasible'),true);
+  const r=await batAdapter.rotate({caseId:activeBatCase,version:13,digest:fixtureDigest},session);assert.equal(r.status,'ok');
+  rasterCtx={caseId:activeBatCase,version:13,linkToken:r.value.linkToken,sourceSession:session,expectedDigest:fixtureDigest};
+  const result=await previewGate(rasterCtx);assert.equal(result.status,'ok');projection=result.value;
+  assert.equal(projection.sourceDigest,fixtureDigest);assert.equal(projection.mime,'image/png');assert.equal(projection.manufacturable,false);
+  assert.equal(projection.version,13);assert.equal(projection.width,64);assert.equal(projection.height,32);
+  const bytes=Buffer.from(projection.pngBase64,'base64');assert.equal(createHash('sha256').update(bytes).digest('hex'),projection.previewDigest);
+  assert.equal(renderCalls,1);
+ });
+ await rtest('V02 decoded PNG exact fixture colors and dimensions',async()=>{
+  const {data,info}=await sharp(Buffer.from(projection.pngBase64,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  assert.equal(info.width,64);assert.equal(info.height,32);assert.equal(info.channels,4);
+  for(let y=0;y<32;y++)for(let x=0;x<64;x++)assert.deepEqual([...data.subarray((y*64+x)*4,(y*64+x)*4+4)],x<32?[255,0,0,255]:[0,0,255,255]);
+ });
+ await rtest('V03 unpinned SVG and unauthorized session never rasterize',async()=>{
+  await assert.rejects(()=>rasterizePinnedFixture(Buffer.from('<svg/>')));
+  assert.deepEqual(await previewGate({...rasterCtx,expectedDigest:archiveDigest}),{status:'unavailable'});
+  assert.deepEqual(await previewGate({...rasterCtx,sourceSession:otherSession}),{status:'unavailable'});assert.equal(renderCalls,1);
+ });
+ const transportGate=createBatPreviewGate(batAdapter,[fixtureDigest],rasterizePinnedFixture);
+ const imageBroker=await startBatStatusBroker(batAdapter,120000,transportGate);
+ let imagePassed=0;
+ const itest=async(name,fn)=>{await fn();imagePassed++;console.log('J08_IMAGE_HTTP '+JSON.stringify({name,status:'PASS'}));};
+ const imageSession=imageBroker.provision(rasterCtx);
+ const imageCall=(s,body='{}',patch={})=>fetch(imageBroker.origin+'/bat/preview',{method:'POST',headers:{origin:imageBroker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0],...patch},body});
+ try{
+  await itest('I01 real PNG HTTP exact bytes, digest and no cache',async()=>{
+   const r=await imageCall(imageSession);assert.equal(r.status,200);assert.equal(r.headers.get('content-type'),'image/png');assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('x-content-type-options'),'nosniff');assert.equal(r.headers.get('x-bat-source-sha256'),fixtureDigest);assert.equal(r.headers.get('x-bat-preview-sha256'),projection.previewDigest);
+   const bytes=Buffer.from(await r.arrayBuffer());assert.deepEqual(bytes,Buffer.from(projection.pngBase64,'base64'));
+  });
+  await itest('I02 wrong session, origin and injected digest denied without PNG',async()=>{
+   const cases=[
+    ['wrong session',403,()=>imageCall(imageBroker.provision({...rasterCtx,sourceSession:otherSession}))],
+    ['wrong origin',403,()=>imageCall(imageSession,'{}',{origin:'http://invalid.test'})],
+    ['short injected field',400,()=>imageCall(imageSession,JSON.stringify({expectedDigest:'x'}))],
+    ['oversized digest injection',413,()=>imageCall(imageSession,JSON.stringify({expectedDigest:fixtureDigest}))]
+   ];
+   assert.ok(Buffer.byteLength(JSON.stringify({expectedDigest:fixtureDigest}))>64);
+   for(const [label,code,request] of cases){
+    const r=await request();assert.equal(r.status,code,label);assert.deepEqual(await r.json(),deniedStatus.body,label);assert.equal(r.headers.get('x-bat-preview-sha256'),null,label);
+   }
+  });
+  await itest('I03 status-only session and revoked cookie cannot fetch PNG',async()=>{
+   const {expectedDigest,...statusOnly}=rasterCtx;
+   const noImage=await imageCall(imageBroker.provision(statusOnly));assert.equal(noImage.status,403);assert.deepEqual(await noImage.json(),deniedStatus.body);
+   const revoked=imageBroker.provision(rasterCtx);revoked.revoke();const r=await imageCall(revoked);assert.equal(r.status,403);assert.deepEqual(await r.json(),deniedStatus.body);
+  });
+  // Exercise the exact frontend transport in Node with a browser boundary shim.
+  // This is not a Playwright/browser or visual proof.
+  const webRoot=join(process.env.J06_PORT,'../../../../web');
+  const ts=createRequire(join(webRoot,'package.json'))('typescript');
+  const source=readFileSync(join(webRoot,'src/lib/j08/bat-lab-transport.ts'),'utf8');
+  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+  const transport=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  const nativeFetch=globalThis.fetch,priorWindow=Object.getOwnPropertyDescriptor(globalThis,'window');
+  let clientPassed=0,clientCalls=0,tamper=false;
+  const cbt=async(name,fn)=>{await fn();clientPassed++;console.log('J08_CLIENT_TRANSPORT '+JSON.stringify({name,status:'PASS'}));};
+  const fakeWindow={location:new URL(imageBroker.origin)};
+  Object.defineProperty(globalThis,'window',{value:fakeWindow,configurable:true});
+  globalThis.fetch=async(path,init)=>{
+   clientCalls++;
+   assert.ok(['/bat/status','/bat/preview'].includes(path));assert.equal(init.method,'POST');assert.equal(init.body,'{}');assert.equal(init.credentials,'same-origin');assert.equal(init.redirect,'error');assert.equal(init.cache,'no-store');
+   const r=await nativeFetch(imageBroker.origin+path,{...init,headers:{...init.headers,origin:imageBroker.origin,'sec-fetch-site':'same-origin',cookie:imageSession.cookie.split(';')[0]}});
+   if(!tamper||path!=='/bat/preview')return r;
+   const headers=new Headers(r.headers);headers.set('x-bat-preview-sha256','0'.repeat(64));return new Response(await r.arrayBuffer(),{status:r.status,headers});
+  };
+  try{
+   await cbt('F01 exact frontend transport reads authoritative status',async()=>{assert.deepEqual(await transport.readBatLabStatus(),{status:'ok',value:{scope:'LAB',manufacturable:false,version:13,status:'review'}});});
+   await cbt('F02 frontend verifies PNG bytes and digest',async()=>{const r=await transport.readBatLabPreview();assert.equal(r.status,'ok');assert.equal(r.value.blob.type,'image/png');assert.equal(r.value.sourceDigest,fixtureDigest);assert.equal(r.value.previewDigest,projection.previewDigest);assert.deepEqual(Buffer.from(await r.value.blob.arrayBuffer()),Buffer.from(projection.pngBase64,'base64'));});
+   await cbt('F03 frontend rejects tampered digest',async()=>{tamper=true;try{assert.deepEqual(await transport.readBatLabPreview(),{status:'unavailable'});}finally{tamper=false;}});
+   await cbt('F04 non-loopback and cancelled operations make no HTTP request',async()=>{const count=clientCalls;fakeWindow.location=new URL('https://example.invalid');assert.deepEqual(await transport.readBatLabStatus(),{status:'unavailable'});fakeWindow.location=new URL(imageBroker.origin);const abort=new AbortController();abort.abort();assert.deepEqual(await transport.readBatLabPreview(abort.signal),{status:'unavailable'});assert.equal(clientCalls,count);});
+  }finally{globalThis.fetch=nativeFetch;if(priorWindow)Object.defineProperty(globalThis,'window',priorWindow);else delete globalThis.window;}
+  assert.equal(clientPassed,4);console.log('J08_CLIENT_TRANSPORT_RESULT '+JSON.stringify({passed:clientPassed,failed:0,notRun:0}));
+  const verifyReplacement=async()=>{
+ await rtest('V04 replacement prevents fresh visual projection',async()=>{
+  assert.equal(await decision(work,13,fixtureDigest,'correction'),true);
+  assert.equal(Number(await issue(iss,13)),14);
+  assert.deepEqual(await previewGate(rasterCtx),{status:'unavailable'});assert.equal(renderCalls,1);
+ });
+  await itest('I04 actual superseded BAT cannot deliver PNG',async()=>{
+   const r=await imageCall(imageSession);assert.equal(r.status,403);assert.deepEqual(await r.json(),deniedStatus.body);
+  });
+  };
+  if(process.env.J08_D2_REACT_ORIGIN){
+   const {runPgReactD2}=await import('./bat-react-pg-d2a-lab.mjs');
+   await runPgReactD2({broker:imageBroker,binding:rasterCtx,otherSession,previewDigest:projection.previewDigest,replace:verifyReplacement});
+  }else await verifyReplacement();
+ }finally{await imageBroker.close();}
+ // M3 is additive to the existing dedicated J08 PG17/React proof. All
+ // sessions, OTP deliveries and assets are synthetic; no external SMS.
+ if(process.env.J08_D2_REACT_ORIGIN){
+  const mutationBroker=await startBatStatusBroker(batAdapter,120000,transportGate,batAdapter);
+  let m3Passed=0,version=14,digest=archiveDigest;
+  const m3=async(name,fn)=>{await fn();m3Passed++;console.log('J08_M3 '+JSON.stringify({name,status:'PASS'}));};
+  const next=async()=>{
+   assert.equal(await decision(work,version,digest,'feasible')||await decision(work,version,digest,'correction'),true);
+   assert.equal(Number(await issue(iss,version,fixtureSource())),version+1);
+   version++;digest=fixtureDigest;
+   assert.equal(await decision(work,version,digest,'feasible'),true);
+   const r=await batAdapter.rotate({caseId:activeBatCase,version,digest},session);assert.equal(r.status,'ok');
+   return {caseId:activeBatCase,version,linkToken:r.value.linkToken,sourceSession:session,expectedDigest:digest};
+  };
+  const provision=b=>mutationBroker.provision(b);
+  const brokerFetch=globalThis.fetch;
+  const req=(s,path,body={})=>brokerFetch(mutationBroker.origin+path,{method:'POST',headers:{origin:mutationBroker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0]},body:JSON.stringify(body)});
+  const show=async s=>{const r=await req(s,'/bat/preview');assert.equal(r.status,200);assert.equal(r.headers.get('x-bat-source-sha256'),fixtureDigest);const bytes=Buffer.from(await r.arrayBuffer());assert.equal(createHash('sha256').update(bytes).digest('hex'),r.headers.get('x-bat-preview-sha256'));};
+  const call=async(s,input)=>{const r=await req(s,'/bat/decision',input);assert.equal(r.headers.get('cache-control'),'no-store');return {code:r.status,body:await r.json()};};
+  const ok=result=>({code:200,body:{scope:'LAB',manufacturable:false,version,result}});
+  const no={code:403,body:{status:'unavailable',manufacturable:false}};
+  const request={action:'request-otp'},refuse={action:'refuse',explicit:true,locale:'ar'};
+  const confirm=code=>({action:'confirm',explicit:true,locale:'fr',code});
+  const count=()=>scalar(admin,'select count(*)::int from j08_private.bat_decisions where case_id=$1 and version=$2',[activeBatCase,version]);
+  const row=async()=> (await admin.query('select decision,locale,digest,statement_version,challenge_id from j08_private.bat_decisions where case_id=$1 and version=$2',[activeBatCase,version])).rows[0];
+  const otp=async s=>{
+   const n=fakeMessages.length;assert.deepEqual(await call(s,request),ok('otp-sent'));assert.equal(fakeMessages.length,n+1);
+   const m=fakeMessages[n];assert.equal(m.version,version);
+   assert.equal(await scalar(admin,'select count(*)::int from j08_private.otp_challenges where challenge_id=$1',[m.challengeId]),1);
+   return m;
+  };
+  try{
+   await m3('P01 exact preview, OTP delivery and durable approval, replay denied',async()=>{
+    const b=await next(),s=provision(b);await show(s);
+    const m=await otp(s);assert.deepEqual(await call(s,confirm(m.code)),ok('approved'));
+    assert.deepEqual(await row(),{decision:'approved',locale:'fr',digest:fixtureDigest,statement_version:'lab-bat-v1',challenge_id:m.challengeId});
+    assert.equal(await count(),1);assert.deepEqual(await call(s,confirm(m.code)),no);
+    const r=await req(s,'/bat/status');assert.deepEqual(await r.json(),{scope:'LAB',manufacturable:false,version,status:'approved'});
+   });
+   await m3('P02 five incorrect OTP attempts are durable and lock confirmation',async()=>{
+    const b=await next(),s=provision(b);await show(s);const m=await otp(s);
+    const wrong=m.code==='000000'?'000001':'000000';
+    for(let i=1;i<=5;i++)assert.deepEqual(await call(s,confirm(wrong)),ok(i===5?'locked':'wrong'));
+    assert.deepEqual(await series(version),{attempts:5,issued_count:1});
+    assert.deepEqual(await call(s,confirm(m.code)),no);assert.equal(await count(),0);
+   });
+   await m3('P03 two independent cookies race approval versus refusal: exactly one decision',async()=>{
+    const b=await next(),a=provision(b),z=provision(b);await show(a);await show(z);const m=await otp(a);
+    assert.deepEqual(await call(z,confirm(m.code)),no);
+    const results=await Promise.all([call(a,confirm(m.code)),call(z,refuse)]);
+    assert.equal(results.filter(x=>x.code===200).length,1);assert.equal(results.filter(x=>x.code===403).length,1);
+    const winner=results.find(x=>x.code===200).body.result;assert.ok(['approved','refused'].includes(winner));
+    assert.equal(await count(),1);assert.equal((await row()).decision,winner);
+   });
+   await m3('P04 rotation denies stale cookie after preview and challenge issuance',async()=>{
+    const b=await next(),s=provision(b);await show(s);const m=await otp(s);
+    const r=await batAdapter.rotate({caseId:activeBatCase,version,digest},session);assert.equal(r.status,'ok');
+    assert.deepEqual(await call(s,confirm(m.code)),no);assert.equal(await count(),0);
+    const n=provision({...b,linkToken:r.value.linkToken});await show(n);assert.deepEqual(await call(n,refuse),ok('refused'));assert.equal((await row()).decision,'refused');
+   });
+   await m3('P05 foreign source session cannot preview or issue OTP; explicit refusal durable',async()=>{
+    const b=await next(),foreign=provision({...b,sourceSession:otherSession}),s=provision(b);
+    const r=await req(foreign,'/bat/preview');assert.equal(r.status,403);await r.json();
+    assert.deepEqual(await call(foreign,request),no);assert.equal(await count(),0);
+    await show(s);assert.deepEqual(await call(s,refuse),ok('refused'));
+    assert.deepEqual(await row(),{decision:'refused',locale:'ar',digest:fixtureDigest,statement_version:'lab-bat-v1',challenge_id:null});
+    assert.deepEqual(await call(s,refuse),no);
+   });
+   await m3('P06 superseded version rejects already issued OTP and preserves no consent',async()=>{
+    const b=await next(),s=provision(b);await show(s);const m=await otp(s),prior=version;
+    await next();
+    assert.deepEqual(await call(s,confirm(m.code)),no);
+    assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_decisions where case_id=$1 and version=$2',[activeBatCase,prior]),0);
+    assert.equal(await count(),0);
+   });
+   assert.equal(m3Passed,6);console.log('J08_M3_RESULT '+JSON.stringify({passed:m3Passed,failed:0,notRun:0}));
+   // M4-A: exercise the actual TypeScript browser transport over the same real
+   // loopback broker. The fetch shim only supplies browser-managed headers.
+   const webRoot=join(process.env.J06_PORT,'../../../../web');
+   const ts=createRequire(join(webRoot,'package.json'))('typescript');
+   const source=readFileSync(join(webRoot,'src/lib/j08/bat-lab-transport.ts'),'utf8');
+   const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+   const transport=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+   const nativeFetch=globalThis.fetch,priorWindow=Object.getOwnPropertyDescriptor(globalThis,'window');
+   const fakeWindow={location:new URL(mutationBroker.origin)};
+   let browserSession,transportCalls=0,m4Passed=0,syntheticResponse;
+   const m4=async(name,fn)=>{await fn();m4Passed++;console.log('J08_M4A '+JSON.stringify({name,status:'PASS'}));};
+   Object.defineProperty(globalThis,'window',{value:fakeWindow,configurable:true});
+   globalThis.fetch=async(path,init)=>{
+    transportCalls++;
+    assert.equal(path,'/bat/decision');assert.equal(init.method,'POST');assert.equal(init.credentials,'same-origin');assert.equal(init.cache,'no-store');assert.equal(init.redirect,'error');assert.equal(init.mode,'same-origin');
+    const body=JSON.parse(init.body);
+    assert.ok(Object.keys(body).every(k=>['action','explicit','locale','code'].includes(k)));
+    if(syntheticResponse)return syntheticResponse();
+    return nativeFetch(mutationBroker.origin+path,{...init,headers:{...init.headers,origin:mutationBroker.origin,'sec-fetch-site':'same-origin',cookie:browserSession.cookie.split(';')[0]}});
+   };
+   const unavailable={status:'unavailable'};
+   const response=result=>({status:'ok',value:{scope:'LAB',manufacturable:false,version,result}});
+   const submit=(input,v=version,signal)=>transport.submitBatLabDecision(input,v,signal);
+   try{
+    await m4('T01 input shape, version, cancellation and non-loopback deny before fetch',async()=>{
+     const n=transportCalls;
+     for(const input of [null,{}, {...request,challengeId:'foreign'}, {...request,version}, {...refuse,explicit:false}, confirm('12345'), {...confirm('123456'),locale:'en'}])assert.deepEqual(await submit(input),unavailable);
+     assert.deepEqual(await submit(request,0),unavailable);
+     const ac=new AbortController();ac.abort();assert.deepEqual(await submit(request,version,ac.signal),unavailable);
+     fakeWindow.location=new URL('https://example.invalid');assert.deepEqual(await submit(request),unavailable);fakeWindow.location=new URL(mutationBroker.origin);
+     assert.equal(transportCalls,n);
+    });
+    await m4('T02 untrusted response shapes, result and version fail closed without retry',async()=>{
+     const good={scope:'LAB',manufacturable:false,version,result:'otp-sent'};
+     const payloads=[{...good,version:version+1},{...good,result:'approved'},{...good,manufacturable:true},{...good,challengeId:'foreign'},{...good,scope:'LIVE'}];
+     const n=transportCalls;
+     for(const value of payloads){
+      syntheticResponse=()=>new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
+      assert.deepEqual(await submit(request),unavailable);
+     }
+     syntheticResponse=()=>{throw Error('simulated lost acknowledgement');};assert.deepEqual(await submit(request),unavailable);
+     assert.equal(transportCalls,n+payloads.length+1);syntheticResponse=undefined;
+    });
+    await m4('T03 real transport requests OTP and confirms exact PG17 BAT',async()=>{
+     const b=await next();browserSession=provision(b);await show(browserSession);const n=fakeMessages.length;
+     assert.deepEqual(await submit(request),response('otp-sent'));assert.equal(fakeMessages.length,n+1);
+     assert.deepEqual(await submit(confirm(fakeMessages[n].code)),response('approved'));
+     assert.equal(await count(),1);assert.equal((await row()).decision,'approved');
+     assert.deepEqual(await submit(confirm(fakeMessages[n].code)),unavailable);
+    });
+    await m4('T04 real transport explicit Arabic refusal; replay denied',async()=>{
+     const b=await next();browserSession=provision(b);await show(browserSession);
+     assert.deepEqual(await submit(refuse),response('refused'));assert.equal((await row()).locale,'ar');
+     assert.deepEqual(await submit(refuse),unavailable);assert.equal(await count(),1);
+    });
+   }finally{globalThis.fetch=nativeFetch;if(priorWindow)Object.defineProperty(globalThis,'window',priorWindow);else delete globalThis.window;}
+   assert.equal(m4Passed,4);console.log('J08_M4A_RESULT '+JSON.stringify({passed:m4Passed,failed:0,notRun:0}));
+
+  }finally{await mutationBroker.close();}
+ }
+ assert.equal(imagePassed,4);console.log('J08_IMAGE_HTTP_RESULT '+JSON.stringify({passed:imagePassed,failed:0,notRun:0}));
+ assert.equal(rasterPassed,4);console.log('J08_RASTER_RESULT '+JSON.stringify({passed:rasterPassed,failed:0,notRun:0}));
+ assert.equal(brokerPassed,4);console.log('J08_BROKER_RESULT '+JSON.stringify({passed:brokerPassed,failed:0,notRun:0}));
+ assert.equal(adapterPassed,4);console.log('J08_ADAPTER_RESULT '+JSON.stringify({passed:adapterPassed,failed:0,notRun:0}));
+ assert.equal(gatePassed,7);console.log('J08_GATE_RESULT '+JSON.stringify({passed:gatePassed,failed:0,notRun:0}));
+ assert.equal(otpPassed,11);console.log('J08_OTP_RESULT '+JSON.stringify({passed:otpPassed,failed:0,notRun:0}));
+ assert.equal(linkPassed,9);console.log('J08_LINK_RESULT '+JSON.stringify({passed:linkPassed,failed:0,notRun:0}));
+ assert.equal(j08Passed,8);console.log('J08_PG_RESULT '+JSON.stringify({passed:j08Passed,failed:0,notRun:0}));
  assert.equal(vPassed,7);console.log('J07_VISUAL_RESULT '+JSON.stringify({passed:vPassed,failed:0,notRun:0}));
  assert.equal(hPassed,5);console.log('J07_SESSION_RESULT '+JSON.stringify({passed:hPassed,failed:0,notRun:0}));
  assert.equal(gPassed,8);console.log('J07_D1B_RESULT '+JSON.stringify({passed:gPassed,failed:0,notRun:0}));
