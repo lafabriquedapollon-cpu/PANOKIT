@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url),{PILOT_MODEL,REQUIRED_EVIDENCE,indu
 const {admitLabGuest,issueGuestLabLease,acknowledgeLabVisual}=require(process.env.J06_PORT.replace(/quote-pg-lab\.js$/,'quote-validity-lab.js'));
 const dir=mkdtempSync(join(tmpdir(),'panokit-j06-')),db='panokit_j03_industrial_lab',port=55450,pw=randomBytes(32).toString('hex');
 const pg=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:pw,port,authMethod:'scram-sha-256',persistent:true,postgresFlags:['-c','listen_addresses=127.0.0.1'],autoRehydrateSymlinks:true,onLog:()=>{},onError:()=>{}});
-const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client','j08_otp_sender','j08_commercial_fixture','j08_gate_reader'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,otpPassed=0,gatePassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
+const roles=['j03_editor','j03_approver','j03_revoker','j03_reader','j06_editor','j06_approver','j06_revoker','j06_runtime','j06_outsider','j08_intake','j08_issuer','j08_workshop_a','j08_workshop_b','j08_client','j08_otp_sender','j08_commercial_fixture','j08_gate_reader'],creds={},clients=new Set();let started=false,listener,passed=0,cPassed=0,gPassed=0,hPassed=0,vPassed=0,j08Passed=0,linkPassed=0,otpPassed=0,gatePassed=0,adapterPassed=0,lease,guestPickupToken,guestCurrentToken,pickupReceipt,deliveryReceipt,deliveryToken,deliveryFingerprint;
 async function connect(user,password,database=db){const c=new Client({host:'127.0.0.1',port,database,user,password,connectionTimeoutMillis:5000,statement_timeout:10000,query_timeout:15000});await c.connect();clients.add(c);return c;}
 async function close(c){clients.delete(c);await c.end();}
 const login=role=>connect(role,creds[role]);const scalar=async(c,q,a=[])=>Object.values((await c.query(q,a)).rows[0])[0];
@@ -26,6 +26,7 @@ async function j08test(name,fn){await fn();j08Passed++;console.log('J08_PG '+JSO
 async function linktest(name,fn){await fn();linkPassed++;console.log('J08_LINK '+JSON.stringify({name,status:'PASS'}));}
 async function otptest(name,fn){await fn();otpPassed++;console.log('J08_OTP '+JSON.stringify({name,status:'PASS'}));}
 async function gatetest(name,fn){await fn();gatePassed++;console.log('J08_GATE '+JSON.stringify({name,status:'PASS'}));}
+async function adaptertest(name,fn){await fn();adapterPassed++;console.log('J08_ADAPTER '+JSON.stringify({name,status:'PASS'}));}
 const leaseCall=async(path,body)=>{const res=await fetch(listener.url.replace(/quote$/,path),{method:'POST',headers:{authorization:'Bearer '+listener.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:res.status,body:await res.json()};};
 const industrial={modelId:PILOT_MODEL,formatId:'test-only',revision:1,widthMm:101,heightMm:202,depthMm:30,labelFr:'TEST_ONLY',labelAr:'اختبار',evidence:REQUIRED_EVIDENCE.map((kind,i)=>({kind,privateRef:'fixture_evidence_'+i,sha256:String(i+1).repeat(64)}))};
 const digest=industrialDigest(industrial),tariff=revision=>({scope:'LAB',modelId:PILOT_MODEL,formatId:'test-only',industrialRevision:1,industrialDigest:digest,revision,currency:'MAD',vatBps:1250,baseNetMinor:101,options:[{id:'test-a',netMinor:2},{id:'test-b',netMinor:9}],pickupDepots:['test-depot','test-other'],zones:[{zoneId:'test-zone',depotId:'test-other',netMinor:8}]}),dest={'lab-destination':{zoneId:'test-zone',depotId:'test-other'}};
@@ -554,6 +555,48 @@ try{
   assert.equal(await scalar(admin,'select count(*)::int from j08_private.commercial_fixture_events'),3);
   assert.ok(Number(await scalar(admin,'select security_revision from j08_private.cases'))>0);
  });
+ const {createBatLabAdapter}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-pg-lab.js'));
+ const realConnect=role=>async()=>{const c=await login(role);return {query:(q,a)=>c.query(q,a),close:()=>close(c)};};
+ const fakeMessages=[];
+ const ports={issuer:realConnect('j08_issuer'),client:realConnect('j08_client'),sender:realConnect('j08_otp_sender'),fakeDelivery:async m=>{fakeMessages.push(m);}};
+ const batAdapter=createBatLabAdapter(ports);
+ const work=await login('j08_workshop_a'),iss=await login('j08_issuer');
+ let ctx,challenge;
+ await adaptertest('A01 real adapter issues private hashed link and reviews exact bytes',async()=>{
+  assert.equal(await decision(work,8,archiveDigest,'correction'),true);
+  assert.equal(Number(await issue(iss,8)),9);
+  assert.equal(await decision(work,9,archiveDigest,'feasible'),true);
+  const r=await batAdapter.rotate({caseId:activeBatCase,version:9,digest:archiveDigest},session);
+  assert.equal(r.status,'ok');ctx={caseId:activeBatCase,version:9,linkToken:r.value.linkToken};
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.links where token_hash=$1',[hashToken(ctx.linkToken)]),1);
+  const view=await batAdapter.review(ctx,session);assert.equal(view.status,'ok');assert.deepEqual(Buffer.from(view.value.bytesBase64,'base64'),archiveBytes);
+  assert.deepEqual(await batAdapter.review(ctx,otherSession),{status:'unavailable'});
+  assert.deepEqual(await batAdapter.status({...ctx,session},session),{status:'unavailable'});
+ });
+ await adaptertest('A02 actual OTP issued only after commit and wrong count persisted',async()=>{
+  const r=await batAdapter.sendOtp({...ctx,digest:archiveDigest},session);assert.equal(r.status,'ok');challenge=r.value.challengeId;
+  assert.equal(fakeMessages.length,1);assert.equal(fakeMessages[0].challengeId,challenge);
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.otp_challenges where challenge_id=$1',[challenge]),1);
+  assert.deepEqual(await batAdapter.confirm({...ctx,digest:archiveDigest,challengeId:challenge,code:'invalid',statement:'lab-bat-v1',locale:'ar'},session),{status:'ok',value:'wrong'});
+  assert.deepEqual(await series(9),{attempts:1,issued_count:1});
+ });
+ await adaptertest('A03 lost actual commit acknowledgement never returns approval; status reconciles',async()=>{
+  const ambiguous=createBatLabAdapter({...ports,client:async()=>{const c=await realConnect('j08_client')();return {...c,query:async(q,a)=>{const r=await c.query(q,a);if(q==='commit')throw Error('simulated lost ACK');return r;}};}});
+  const request={...ctx,digest:archiveDigest,challengeId:challenge,code:fakeMessages[0].code,statement:'lab-bat-v1',locale:'fr'};
+  assert.deepEqual(await ambiguous.confirm(request,session),{status:'unavailable'});
+  assert.equal((await batAdapter.status(ctx,session)).value.status,'approved');
+  assert.deepEqual(await batAdapter.confirm(request,session),{status:'unavailable'});
+  assert.equal(await scalar(admin,'select count(*)::int from j08_private.bat_decisions where version=9'),1);
+ });
+ await adaptertest('A04 actual ambiguous OTP commit never delivers code',async()=>{
+  assert.equal(await decision(work,9,archiveDigest,'correction'),true);assert.equal(Number(await issue(iss,9)),10);assert.equal(await decision(work,10,archiveDigest,'feasible'),true);
+  const r=await batAdapter.rotate({caseId:activeBatCase,version:10,digest:archiveDigest},session);assert.equal(r.status,'ok');
+  const next={caseId:activeBatCase,version:10,linkToken:r.value.linkToken};
+  const ambiguous=createBatLabAdapter({...ports,sender:async()=>{const c=await realConnect('j08_otp_sender')();return {...c,query:async(q,a)=>{const r=await c.query(q,a);if(q==='commit')throw Error('simulated lost ACK');return r;}};}});
+  assert.deepEqual(await ambiguous.sendOtp({...next,digest:archiveDigest},session),{status:'unavailable'});
+  assert.equal(fakeMessages.length,1);assert.deepEqual(await series(10),{attempts:0,issued_count:1});
+ });
+ assert.equal(adapterPassed,4);console.log('J08_ADAPTER_RESULT '+JSON.stringify({passed:adapterPassed,failed:0,notRun:0}));
  assert.equal(gatePassed,7);console.log('J08_GATE_RESULT '+JSON.stringify({passed:gatePassed,failed:0,notRun:0}));
  assert.equal(otpPassed,11);console.log('J08_OTP_RESULT '+JSON.stringify({passed:otpPassed,failed:0,notRun:0}));
  assert.equal(linkPassed,9);console.log('J08_LINK_RESULT '+JSON.stringify({passed:linkPassed,failed:0,notRun:0}));
