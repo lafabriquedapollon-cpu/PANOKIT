@@ -137,7 +137,15 @@ export async function runGuestReactLab({browser,domain,connect,fixture,preview,a
    if(m.width<=760&&(screen==='pickup'||screen==='delivery'||screen==='error')){audit(key+'/'+screen+'/mobile-total',m.mobile===m.total);audit(key+'/'+screen+'/form-before-detail',m.action.bottom<=m.preview.top+1);}
    if(screen==='stale')audit(key+'/stale/no-amount',m.amounts===0);
    if(screen==='review'||screen==='acknowledged'){audit(key+'/'+screen+'/visual-first',m.image>0&&m.preview.bottom<=m.action.top+1);audit(key+'/'+screen+'/reviewed-quote',m.amounts===6&&m.total?.replace(/\s/g,'')==='1,35MAD');}
-   const file='j07-d2-'+key+'-'+screen+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});matrix.captures.push(file);
+   if(screen==='acknowledged'){
+     const ar=key.startsWith('ar-'),kit=ar?'مجموعتك':'Votre kit',visual=ar?'المعاينة المعتمدة تجريبياً':'Aperçu validé en LAB',saved=ar?'تم حفظ المعاينة والموافقة التجريبية. لا يوجد طلب أو دفع.':'Aperçu et accord LAB archivés. Aucune commande ni aucun paiement.';
+     audit(key+'/ack/distinct-headings',await p.getByRole('heading',{name:kit,exact:true,level:2}).count()===1&&await p.getByRole('heading',{name:visual,exact:true,level:2}).isVisible());
+     audit(key+'/ack/single-archive-status',await p.getByText(saved,{exact:true}).count()===1&&await p.getByRole('status').filter({hasText:saved}).isVisible());
+     await p.waitForFunction(()=>document.activeElement===document.querySelector('[data-testid=j07-lab] h1'));
+     const focus=await p.evaluate(()=>{const root=document.querySelector('[data-testid=j07-lab]'),h=root.querySelector('h1'),s=getComputedStyle(h);const luminance=c=>c.match(/[0-9.]+/g).slice(0,3).map(x=>Number(x)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4).reduce((sum,x,i)=>sum+x*[.2126,.7152,.0722][i],0);const a=luminance(s.outlineColor),b=luminance(getComputedStyle(root).backgroundColor);return {active:document.activeElement===h,style:s.outlineStyle,width:parseFloat(s.outlineWidth),offset:parseFloat(s.outlineOffset),contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};});
+     audit(key+'/ack/heading-focus',focus.active&&focus.style==='solid'&&focus.width>=2&&focus.offset>=2&&focus.contrast>=3);
+    }
+    const file='j07-d2-'+key+'-'+screen+'.png';await p.screenshot({path:join(out,file),fullPage:true,animations:'disabled'});matrix.captures.push(file);
   }
   try{
    for(const lang of ['fr','ar'])for(const width of [320,390,768,1440]){
