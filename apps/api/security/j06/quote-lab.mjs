@@ -663,11 +663,37 @@ try{
   assert.deepEqual(await previewGate({...rasterCtx,expectedDigest:archiveDigest}),{status:'unavailable'});
   assert.deepEqual(await previewGate({...rasterCtx,sourceSession:otherSession}),{status:'unavailable'});assert.equal(renderCalls,1);
  });
+ const transportGate=createBatPreviewGate(batAdapter,[fixtureDigest],rasterizePinnedFixture);
+ const imageBroker=await startBatStatusBroker(batAdapter,120000,transportGate);
+ let imagePassed=0;
+ const itest=async(name,fn)=>{await fn();imagePassed++;console.log('J08_IMAGE_HTTP '+JSON.stringify({name,status:'PASS'}));};
+ const imageSession=imageBroker.provision(rasterCtx);
+ const imageCall=(s,body='{}',patch={})=>fetch(imageBroker.origin+'/bat/preview',{method:'POST',headers:{origin:imageBroker.origin,'sec-fetch-site':'same-origin','content-type':'application/json',cookie:s.cookie.split(';')[0],...patch},body});
+ try{
+  await itest('I01 real PNG HTTP exact bytes, digest and no cache',async()=>{
+   const r=await imageCall(imageSession);assert.equal(r.status,200);assert.equal(r.headers.get('content-type'),'image/png');assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('x-content-type-options'),'nosniff');assert.equal(r.headers.get('x-bat-source-sha256'),fixtureDigest);assert.equal(r.headers.get('x-bat-preview-sha256'),projection.previewDigest);
+   const bytes=Buffer.from(await r.arrayBuffer());assert.deepEqual(bytes,Buffer.from(projection.pngBase64,'base64'));
+  });
+  await itest('I02 wrong session, origin and injected digest denied without PNG',async()=>{
+   for(const r of [await imageCall(imageBroker.provision({...rasterCtx,sourceSession:otherSession})),await imageCall(imageSession,'{}',{origin:'http://invalid.test'}),await imageCall(imageSession,JSON.stringify({expectedDigest:fixtureDigest}))]){
+    assert.ok([400,403].includes(r.status));assert.deepEqual(await r.json(),deniedStatus.body);assert.equal(r.headers.get('x-bat-preview-sha256'),null);
+   }
+  });
+  await itest('I03 status-only session and revoked cookie cannot fetch PNG',async()=>{
+   const {expectedDigest,...statusOnly}=rasterCtx;
+   const noImage=await imageCall(imageBroker.provision(statusOnly));assert.equal(noImage.status,403);assert.deepEqual(await noImage.json(),deniedStatus.body);
+   const revoked=imageBroker.provision(rasterCtx);revoked.revoke();const r=await imageCall(revoked);assert.equal(r.status,403);assert.deepEqual(await r.json(),deniedStatus.body);
+  });
  await rtest('V04 replacement prevents fresh visual projection',async()=>{
   assert.equal(await decision(work,13,fixtureDigest,'correction'),true);
   assert.equal(Number(await issue(iss,13)),14);
   assert.deepEqual(await previewGate(rasterCtx),{status:'unavailable'});assert.equal(renderCalls,1);
  });
+  await itest('I04 actual superseded BAT cannot deliver PNG',async()=>{
+   const r=await imageCall(imageSession);assert.equal(r.status,403);assert.deepEqual(await r.json(),deniedStatus.body);
+  });
+ }finally{await imageBroker.close();}
+ assert.equal(imagePassed,4);console.log('J08_IMAGE_HTTP_RESULT '+JSON.stringify({passed:imagePassed,failed:0,notRun:0}));
  assert.equal(rasterPassed,4);console.log('J08_RASTER_RESULT '+JSON.stringify({passed:rasterPassed,failed:0,notRun:0}));
  assert.equal(brokerPassed,4);console.log('J08_BROKER_RESULT '+JSON.stringify({passed:brokerPassed,failed:0,notRun:0}));
  assert.equal(adapterPassed,4);console.log('J08_ADAPTER_RESULT '+JSON.stringify({passed:adapterPassed,failed:0,notRun:0}));
