@@ -635,6 +635,40 @@ try{
    browser.revoke();assert.deepEqual(await requestStatus(browser),deniedStatus);
   });
  }finally{await broker.close();}
+ const {fixtureSource,fixtureDigest,rasterizePinnedFixture}=await import('./bat-raster-fixture-lab.mjs');
+ const {createBatPreviewGate}=require(process.env.J06_PORT.replace(/j06\/quote-pg-lab\.js$/,'j08/bat-preview-gate-lab.js'));
+ const sharp=createRequire(new URL('../../../web/package.json',import.meta.url))('sharp');
+ let rasterPassed=0,rasterCtx,projection,renderCalls=0;
+ const rtest=async(name,fn)=>{await fn();rasterPassed++;console.log('J08_RASTER '+JSON.stringify({name,status:'PASS'}));};
+ const previewGate=createBatPreviewGate(batAdapter,[fixtureDigest],async source=>{renderCalls++;return rasterizePinnedFixture(source);});
+ await rtest('V01 exact PG17 BAT yields real isolated PNG with verified digests',async()=>{
+  assert.equal(await decision(work,12,archiveDigest,'feasible'),true);
+  assert.equal(Number(await issue(iss,12,fixtureSource())),13);
+  assert.equal(await decision(work,13,fixtureDigest,'feasible'),true);
+  const r=await batAdapter.rotate({caseId:activeBatCase,version:13,digest:fixtureDigest},session);assert.equal(r.status,'ok');
+  rasterCtx={caseId:activeBatCase,version:13,linkToken:r.value.linkToken,sourceSession:session,expectedDigest:fixtureDigest};
+  const result=await previewGate(rasterCtx);assert.equal(result.status,'ok');projection=result.value;
+  assert.equal(projection.sourceDigest,fixtureDigest);assert.equal(projection.mime,'image/png');assert.equal(projection.manufacturable,false);
+  assert.equal(projection.version,13);assert.equal(projection.width,64);assert.equal(projection.height,32);
+  const bytes=Buffer.from(projection.pngBase64,'base64');assert.equal(createHash('sha256').update(bytes).digest('hex'),projection.previewDigest);
+  assert.equal(renderCalls,1);
+ });
+ await rtest('V02 decoded PNG exact fixture colors and dimensions',async()=>{
+  const {data,info}=await sharp(Buffer.from(projection.pngBase64,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  assert.equal(info.width,64);assert.equal(info.height,32);assert.equal(info.channels,4);
+  for(let y=0;y<32;y++)for(let x=0;x<64;x++)assert.deepEqual([...data.subarray((y*64+x)*4,(y*64+x)*4+4)],x<32?[255,0,0,255]:[0,0,255,255]);
+ });
+ await rtest('V03 unpinned SVG and unauthorized session never rasterize',async()=>{
+  await assert.rejects(()=>rasterizePinnedFixture(Buffer.from('<svg/>')));
+  assert.deepEqual(await previewGate({...rasterCtx,expectedDigest:archiveDigest}),{status:'unavailable'});
+  assert.deepEqual(await previewGate({...rasterCtx,sourceSession:otherSession}),{status:'unavailable'});assert.equal(renderCalls,1);
+ });
+ await rtest('V04 replacement prevents fresh visual projection',async()=>{
+  assert.equal(await decision(work,13,fixtureDigest,'correction'),true);
+  assert.equal(Number(await issue(iss,13)),14);
+  assert.deepEqual(await previewGate(rasterCtx),{status:'unavailable'});assert.equal(renderCalls,1);
+ });
+ assert.equal(rasterPassed,4);console.log('J08_RASTER_RESULT '+JSON.stringify({passed:rasterPassed,failed:0,notRun:0}));
  assert.equal(brokerPassed,4);console.log('J08_BROKER_RESULT '+JSON.stringify({passed:brokerPassed,failed:0,notRun:0}));
  assert.equal(adapterPassed,4);console.log('J08_ADAPTER_RESULT '+JSON.stringify({passed:adapterPassed,failed:0,notRun:0}));
  assert.equal(gatePassed,7);console.log('J08_GATE_RESULT '+JSON.stringify({passed:gatePassed,failed:0,notRun:0}));
