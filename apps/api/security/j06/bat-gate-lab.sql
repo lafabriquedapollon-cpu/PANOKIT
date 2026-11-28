@@ -51,7 +51,7 @@ BEGIN
  ELSE
  SELECT attempts INTO a FROM j08_private.otp_series WHERE case_id=p_case AND version=p_version;
  s:=CASE WHEN COALESCE(a,0)>=5 THEN 'locked' ELSE 'review' END;
- END IF; END IF;
+ END IF;
  END IF;
  RETURN jsonb_build_object('scope','LAB','manufacturable',false,'version',p_version,'status',s);
 END $$;
